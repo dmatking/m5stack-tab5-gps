@@ -10,6 +10,7 @@
 #include "tile_cache.h"
 #include "board_interface.h"
 #include "map_config.h"
+#include "tile_flash.h"
 #include "tile_synth.h"
 
 #include <assert.h>
@@ -134,7 +135,9 @@ static void generator_task(void *arg)
         tile_slot_t *slot = find_slot(req.tx, req.ty);
         if (!slot || slot->state != SLOT_GENERATING) continue; // stale/evicted
 
-        synth_tile(req.tx, req.ty, slot->pixels);
+        if (!tile_flash_read(req.tx, req.ty, slot->pixels)) {
+            synth_tile(req.tx, req.ty, slot->pixels);
+        }
         slot->state = SLOT_READY;
         atomic_fetch_add(&s_ready_epoch, 1);
     }

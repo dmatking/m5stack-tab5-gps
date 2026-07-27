@@ -6,10 +6,16 @@
 // Standard slippy-map tile size.
 #define MAP_TILE_SIZE   256
 
-// Fixed zoom level for v1 (pure pan/drag, no zoom UI yet). Only affects the
-// procedural tile pattern's coordinate space -- swap this out (and the tile
-// source) when zoom support is added later.
-#define MAP_ZOOM        14
+// Fixed zoom level for v1 (pure pan/drag, no zoom UI yet).
+#define MAP_ZOOM        16
+
+// Embedded real-tile grid (see main/tile_flash.c, scratchpad/fetch_tiles.py).
+// Centered on 32.8896614814945,-97.34129452988256. Panning outside this
+// range falls back to the procedural pattern from tile_synth.c.
+#define MAP_TILE_BASE_TX     15043
+#define MAP_TILE_BASE_TY     26416
+#define MAP_TILE_GRID_COLS   8
+#define MAP_TILE_GRID_ROWS   10
 
 // Tile cache: worst-case on-screen tiles for a 720x1280 viewport at 256px
 // tiles is 4 cols x 6 rows = 24. Add a prefetch margin ring and round up.

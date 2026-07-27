@@ -6,6 +6,7 @@
 #include "board_interface.h"
 #include "map_view.h"
 #include "tile_cache.h"
+#include "tile_flash.h"
 #include "touch.h"
 
 static const char *TAG = "APP";
@@ -24,6 +25,7 @@ void app_main(void)
         ESP_LOGW(TAG, "Touch unavailable -- map will render but won't be draggable.");
     }
 
+    tile_flash_init();
     tile_cache_init();
     map_view_start();
 }

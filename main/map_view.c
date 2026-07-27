@@ -27,8 +27,13 @@ static void map_task(void *arg)
 {
     (void)arg;
 
-    int32_t pan_x = 0;
-    int32_t pan_y = 0;
+    // Start centered on the embedded real-tile grid (see map_config.h) rather
+    // than world tile (0,0) -- otherwise the real tiles are unreachable
+    // without dragging millions of pixels to get there.
+    int32_t grid_w = MAP_TILE_GRID_COLS * MAP_TILE_SIZE;
+    int32_t grid_h = MAP_TILE_GRID_ROWS * MAP_TILE_SIZE;
+    int32_t pan_x = MAP_TILE_BASE_TX * MAP_TILE_SIZE + (grid_w - board_lcd_width()) / 2;
+    int32_t pan_y = MAP_TILE_BASE_TY * MAP_TILE_SIZE + (grid_h - board_lcd_height()) / 2;
 
     bool dragging = false;
     int16_t last_x = 0, last_y = 0;

@@ -7,6 +7,11 @@ CONFIG_ESP32P4_REV_MIN_100=y
 # Flash
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 
+# Custom partition table -- adds a "tiledata" raw partition holding
+# pre-converted RGB565 map tiles (see partitions.csv, main/tile_flash.c)
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
 # CPU (360 MHz)
 CONFIG_ESP_DEFAULT_CPU_FREQ_360=y
 CONFIG_FREERTOS_HZ=1000
