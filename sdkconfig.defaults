@@ -7,6 +7,12 @@ CONFIG_ESP32P4_REV_MIN_100=y
 # Flash
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 
+# Lets flash erase/program ops suspend when the CPU needs the bus instead of
+# blocking interrupts for the whole operation -- prevents the MIPI-DSI frame
+# DMA from missing its per-frame re-arm and underrunning (blue/cyan flash).
+# See m5stack-tab5-ssh-terminal's OTA work for the original diagnosis.
+CONFIG_SPI_FLASH_AUTO_SUSPEND=y
+
 # Custom partition table -- adds a "tiledata" raw partition holding
 # pre-converted RGB565 map tiles (see partitions.csv, main/tile_flash.c)
 CONFIG_PARTITION_TABLE_CUSTOM=y

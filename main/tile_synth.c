@@ -7,21 +7,27 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+// Every zoom change lands 100% in unexplored territory (the cache is keyed
+// by zoom, so a fresh zoom level always starts as an all-miss placeholder
+// screen), unlike panning where only a thin edge is ever new -- so any
+// green-leaning entry here reads as a jarring "everything just turned
+// green" flash on every single zoom step. Deliberately no channel is
+// green(G)-dominant in any of these.
 static const uint16_t PALETTE[] = {
-    0xB79A, // dusty green
-    0x9E7B, // olive
-    0x5D9C, // slate blue
-    0x867D, // muted purple
-    0xC69A, // tan
-    0x4E97, // teal
-    0xAE7B, // warm gray-green
-    0x738C, // steel blue
+    0xACB1, // warm gray
+    0x94F5, // cool gray
+    0xCDB2, // tan
+    0x8CB6, // dusty blue
+    0xBCF4, // dusty rose
+    0x7C11, // slate
+    0xD614, // sand
+    0xA4D6, // lavender gray
 };
 #define PALETTE_LEN (sizeof(PALETTE) / sizeof(PALETTE[0]))
 
-static uint32_t hash2(int32_t x, int32_t y)
+static uint32_t hash2(int32_t x, int32_t y, int32_t z)
 {
-    uint32_t h = (uint32_t)x * 374761393u + (uint32_t)y * 668265263u;
+    uint32_t h = (uint32_t)x * 374761393u + (uint32_t)y * 668265263u + (uint32_t)z * 2246822519u;
     h = (h ^ (h >> 13)) * 1274126177u;
     return h ^ (h >> 16);
 }
@@ -38,9 +44,9 @@ static inline uint16_t shade(uint16_t c, int delta_r, int delta_g, int delta_b)
     return (uint16_t)((r << 11) | (g << 5) | b);
 }
 
-void synth_tile(int32_t tile_x, int32_t tile_y, uint16_t *dst)
+void synth_tile(int32_t tile_x, int32_t tile_y, int32_t zoom, uint16_t *dst)
 {
-    uint32_t h = hash2(tile_x, tile_y);
+    uint32_t h = hash2(tile_x, tile_y, zoom);
     uint16_t base = PALETTE[h % PALETTE_LEN];
     uint16_t alt  = shade(base, -3, -6, -3);
     uint16_t border = shade(base, 10, 12, 10);

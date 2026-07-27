@@ -57,18 +57,22 @@ bool touch_init(void)
     return true;
 }
 
-bool touch_poll(int16_t *x, int16_t *y)
+uint8_t touch_poll_multi(touch_point_t *points, uint8_t max_points)
 {
-    if (!s_tp) return false;
+    if (!s_tp || max_points == 0) return 0;
 
     esp_lcd_touch_read_data(s_tp);
 
-    uint16_t tx[1], ty[1];
+    uint16_t tx[2], ty[2];
     uint8_t cnt = 0;
-    bool pressed = esp_lcd_touch_get_coordinates(s_tp, tx, ty, NULL, &cnt, 1);
-    if (!pressed || cnt == 0) return false;
+    uint8_t query_max = max_points > 2 ? 2 : max_points;
+    bool pressed = esp_lcd_touch_get_coordinates(s_tp, tx, ty, NULL, &cnt, query_max);
+    if (!pressed || cnt == 0) return 0;
 
-    *x = (int16_t)tx[0];
-    *y = (int16_t)ty[0];
-    return true;
+    if (cnt > query_max) cnt = query_max;
+    for (uint8_t i = 0; i < cnt; i++) {
+        points[i].x = (int16_t)tx[i];
+        points[i].y = (int16_t)ty[i];
+    }
+    return cnt;
 }

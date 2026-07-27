@@ -8,6 +8,7 @@
 #include "tile_cache.h"
 #include "tile_flash.h"
 #include "touch.h"
+#include "ui_overlay.h"
 
 static const char *TAG = "APP";
 
@@ -27,5 +28,6 @@ void app_main(void)
 
     tile_flash_init();
     tile_cache_init();
+    ui_overlay_init();
     map_view_start();
 }

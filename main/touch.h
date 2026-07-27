@@ -9,8 +9,13 @@
 // Must be called after board_init(). Returns false if init fails (touch disabled).
 bool touch_init(void);
 
-// Poll for a touch point. Returns true if a finger is currently down, and writes
-// the raw panel coordinates (0..board_lcd_width()-1, 0..board_lcd_height()-1)
-// to *x, *y. Safe to call every loop iteration — this is a plain register read,
-// not an event queue.
-bool touch_poll(int16_t *x, int16_t *y);
+typedef struct {
+    int16_t x, y;
+} touch_point_t;
+
+// Poll for active touch points (0, 1, or 2), writing up to max_points into
+// points[] and returning how many are actually down. Coordinates are raw
+// panel coordinates (0..board_lcd_width()-1, 0..board_lcd_height()-1).
+// Safe to call every loop iteration -- this is a plain register read, not
+// an event queue.
+uint8_t touch_poll_multi(touch_point_t *points, uint8_t max_points);

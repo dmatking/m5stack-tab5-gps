@@ -32,9 +32,9 @@ void tile_flash_init(void)
              (long)MAP_TILE_BASE_TX, (long)MAP_TILE_BASE_TY);
 }
 
-bool tile_flash_read(int32_t tile_x, int32_t tile_y, uint16_t *dst)
+bool tile_flash_read(int32_t tile_x, int32_t tile_y, int32_t zoom, uint16_t *dst)
 {
-    if (!s_part) return false;
+    if (!s_part || zoom != MAP_ZOOM) return false;
 
     int32_t col = tile_x - MAP_TILE_BASE_TX;
     int32_t row = tile_y - MAP_TILE_BASE_TY;

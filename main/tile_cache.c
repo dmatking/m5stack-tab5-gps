@@ -32,7 +32,7 @@ typedef enum { SLOT_EMPTY, SLOT_GENERATING, SLOT_READY } slot_state_t;
 
 typedef struct {
     slot_state_t state;
-    int32_t tx, ty;
+    int32_t tx, ty, zoom;
     uint32_t last_used;
     uint16_t *pixels; // MAP_TILE_SIZE x MAP_TILE_SIZE, RGB565
 } tile_slot_t;
@@ -41,14 +41,14 @@ static tile_slot_t s_slots[MAP_CACHE_SLOTS];
 static uint32_t s_frame_counter = 0;
 
 // Bumped every time a tile finishes generating, so the render loop can tell
-// "nothing changed" (same pan, no newly-arrived tile) from "redraw needed"
-// and skip the whole composite+flip when idle instead of re-blitting an
-// unchanged screen every tick.
+// "nothing changed" (same pan/zoom, no newly-arrived tile) from "redraw
+// needed" and skip the whole composite+flip when idle instead of
+// re-blitting an unchanged screen every tick.
 static _Atomic uint32_t s_ready_epoch = 0;
-static int32_t s_last_pan_x = INT32_MIN, s_last_pan_y = INT32_MIN;
+static int32_t s_last_pan_x = INT32_MIN, s_last_pan_y = INT32_MIN, s_last_zoom = INT32_MIN;
 static uint32_t s_last_rendered_epoch = UINT32_MAX;
 
-typedef struct { int32_t tx, ty; } tile_req_t;
+typedef struct { int32_t tx, ty, zoom; } tile_req_t;
 static QueueHandle_t s_req_q;
 
 static ppa_client_handle_t s_ppa_srm;
@@ -76,18 +76,22 @@ static inline int32_t floor_div(int32_t a, int32_t b)
     return (r != 0 && ((r < 0) != (b < 0))) ? q - 1 : q;
 }
 
-static tile_slot_t *find_slot(int32_t tx, int32_t ty)
+static tile_slot_t *find_slot(int32_t tx, int32_t ty, int32_t zoom)
 {
     for (int i = 0; i < MAP_CACHE_SLOTS; i++) {
-        if (s_slots[i].state != SLOT_EMPTY && s_slots[i].tx == tx && s_slots[i].ty == ty) {
+        if (s_slots[i].state != SLOT_EMPTY && s_slots[i].tx == tx && s_slots[i].ty == ty &&
+            s_slots[i].zoom == zoom) {
             return &s_slots[i];
         }
     }
     return NULL;
 }
 
-// Evict the least-recently-used READY slot (or reuse an EMPTY one).
-static tile_slot_t *alloc_slot(int32_t tx, int32_t ty)
+// Evict the least-recently-used READY slot (or reuse an EMPTY one). Tiles
+// from a zoom level that's no longer being requested simply stop getting
+// their last_used bumped and age out here naturally -- no explicit
+// invalidation needed when the zoom level changes.
+static tile_slot_t *alloc_slot(int32_t tx, int32_t ty, int32_t zoom)
 {
     tile_slot_t *victim = NULL;
     for (int i = 0; i < MAP_CACHE_SLOTS; i++) {
@@ -100,26 +104,27 @@ static tile_slot_t *alloc_slot(int32_t tx, int32_t ty)
     if (!victim) return NULL; // every slot is currently GENERATING -- try again next frame
 
     // Fill in the new identity before flipping state: the generator task only
-    // reads tx/ty for a request after it dequeues the matching (tx,ty), and the
-    // queue send/receive pair below provides the happens-before guarantee.
+    // reads tx/ty/zoom for a request after it dequeues the matching one, and
+    // the queue send/receive pair below provides the happens-before guarantee.
     victim->tx = tx;
     victim->ty = ty;
+    victim->zoom = zoom;
     victim->last_used = s_frame_counter;
     victim->state = SLOT_GENERATING;
     return victim;
 }
 
-static void request_tile(int32_t tx, int32_t ty)
+static void request_tile(int32_t tx, int32_t ty, int32_t zoom)
 {
-    tile_slot_t *slot = find_slot(tx, ty);
+    tile_slot_t *slot = find_slot(tx, ty, zoom);
     if (slot) {
         slot->last_used = s_frame_counter;
         return;
     }
-    slot = alloc_slot(tx, ty);
+    slot = alloc_slot(tx, ty, zoom);
     if (!slot) return;
 
-    tile_req_t req = { .tx = tx, .ty = ty };
+    tile_req_t req = { .tx = tx, .ty = ty, .zoom = zoom };
     if (xQueueSend(s_req_q, &req, 0) != pdTRUE) {
         slot->state = SLOT_EMPTY; // queue full; retry next frame
     }
@@ -132,14 +137,27 @@ static void generator_task(void *arg)
     while (1) {
         if (xQueueReceive(s_req_q, &req, portMAX_DELAY) != pdTRUE) continue;
 
-        tile_slot_t *slot = find_slot(req.tx, req.ty);
+        tile_slot_t *slot = find_slot(req.tx, req.ty, req.zoom);
         if (!slot || slot->state != SLOT_GENERATING) continue; // stale/evicted
 
-        if (!tile_flash_read(req.tx, req.ty, slot->pixels)) {
-            synth_tile(req.tx, req.ty, slot->pixels);
+        if (!tile_flash_read(req.tx, req.ty, req.zoom, slot->pixels)) {
+            synth_tile(req.tx, req.ty, req.zoom, slot->pixels);
         }
         slot->state = SLOT_READY;
         atomic_fetch_add(&s_ready_epoch, 1);
+
+        // Adjacent-zoom prefetch can queue 100+ requests at once (e.g. cold
+        // cache on boot). Each tile is a 128KB PSRAM write; back-to-back with
+        // no pacing that's enough sustained PSRAM bus traffic to starve the
+        // MIPI-DSI DMA's ~140MB/s continuous read need and underrun the
+        // panel (blue/cyan flashing) -- confirmed as a real, previously-
+        // diagnosed failure mode on this exact board (see
+        // m5stack-tab5-ssh-terminal's OTA work). A bare xQueueReceive loop
+        // also never blocks while the queue has items, so without a real
+        // delay here (not taskYIELD -- that only yields to equal-or-higher
+        // priority tasks, and idle is the lowest there is) this can run long
+        // enough to starve the idle task and trip the watchdog too.
+        vTaskDelay(pdMS_TO_TICKS(5));
     }
 }
 
@@ -149,6 +167,7 @@ void tile_cache_init(void)
         s_slots[i].state     = SLOT_EMPTY;
         s_slots[i].tx         = INT32_MIN;
         s_slots[i].ty         = INT32_MIN;
+        s_slots[i].zoom       = INT32_MIN;
         s_slots[i].last_used  = 0;
         s_slots[i].pixels = heap_caps_aligned_alloc(64,
             (size_t)MAP_TILE_SIZE * MAP_TILE_SIZE * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
@@ -230,11 +249,53 @@ static bool ppa_fill_rect(uint8_t *fb, int fb_w, int fb_h, int x, int y, int w, 
     return true;
 }
 
-bool tile_cache_render_viewport(int32_t pan_x, int32_t pan_y)
+// Request the screen-center-anchored viewport (+margin) at zoom+delta, so a
+// single-step zoom in/out usually finds its tiles already cached by the
+// time the user asks for it. Uses the same shift-based world-coordinate
+// transform as map_view.c's zoom_at_point(), just to compute a hypothetical
+// pan for request purposes -- doesn't touch any live pan/zoom state.
+static void request_adjacent_zoom(int32_t pan_x, int32_t pan_y, int32_t zoom, int32_t delta)
+{
+    int32_t adj_zoom = zoom + delta;
+    if (adj_zoom < MAP_MIN_ZOOM || adj_zoom > MAP_MAX_ZOOM) return;
+
+    int32_t focal_x = MAP_LOGICAL_W / 2;
+    int32_t focal_y = MAP_LOGICAL_H / 2;
+
+    int64_t world_x = (int64_t)pan_x + focal_x;
+    int64_t world_y = (int64_t)pan_y + focal_y;
+    if (delta > 0) {
+        world_x <<= delta;
+        world_y <<= delta;
+    } else {
+        world_x >>= -delta;
+        world_y >>= -delta;
+    }
+    int32_t adj_pan_x = (int32_t)(world_x - focal_x);
+    int32_t adj_pan_y = (int32_t)(world_y - focal_y);
+
+    // No margin ring here (unlike the current-zoom request below) -- this is
+    // background prefetch, not what's on screen right now, and every extra
+    // tile is another 128KB PSRAM write competing with the DSI for bus
+    // bandwidth. Exact viewport only, ~24 tiles instead of ~48.
+    int32_t rtx0 = floor_div(adj_pan_x, MAP_TILE_SIZE);
+    int32_t rty0 = floor_div(adj_pan_y, MAP_TILE_SIZE);
+    int32_t rtx1 = floor_div(adj_pan_x + MAP_LOGICAL_W - 1, MAP_TILE_SIZE);
+    int32_t rty1 = floor_div(adj_pan_y + MAP_LOGICAL_H - 1, MAP_TILE_SIZE);
+
+    for (int32_t ty = rty0; ty <= rty1; ty++) {
+        for (int32_t tx = rtx0; tx <= rtx1; tx++) {
+            request_tile(tx, ty, adj_zoom);
+        }
+    }
+}
+
+bool tile_cache_render_viewport(int32_t pan_x, int32_t pan_y, int32_t zoom)
 {
     uint32_t epoch = atomic_load(&s_ready_epoch);
-    if (pan_x == s_last_pan_x && pan_y == s_last_pan_y && epoch == s_last_rendered_epoch) {
-        return false; // nothing moved and no tile finished loading -- skip the redraw
+    if (pan_x == s_last_pan_x && pan_y == s_last_pan_y && zoom == s_last_zoom &&
+        epoch == s_last_rendered_epoch) {
+        return false; // nothing moved/zoomed and no tile finished loading -- skip the redraw
     }
 
     s_frame_counter++;
@@ -254,9 +315,15 @@ bool tile_cache_render_viewport(int32_t pan_x, int32_t pan_y)
 
     for (int32_t ty = rty0; ty <= rty1; ty++) {
         for (int32_t tx = rtx0; tx <= rtx1; tx++) {
-            request_tile(tx, ty);
+            request_tile(tx, ty, zoom);
         }
     }
+
+    // Prefetch the adjacent zoom levels, enqueued after the current zoom's
+    // requests so the generator task (FIFO) always prioritizes what's
+    // actually on screen right now.
+    request_adjacent_zoom(pan_x, pan_y, zoom, -1);
+    request_adjacent_zoom(pan_x, pan_y, zoom, +1);
 
     // Composite exactly the tiles intersecting the visible screen. All PPA ops
     // for this frame are submitted non-blocking back-to-back so the hardware
@@ -305,7 +372,7 @@ bool tile_cache_render_viewport(int32_t pan_x, int32_t pan_y)
             int native_dst_x = dst_y;
             int native_dst_y = MAP_LOGICAL_W - dst_x - w;
 
-            tile_slot_t *slot = find_slot(tx, ty);
+            tile_slot_t *slot = find_slot(tx, ty, zoom);
             bool queued;
             if (slot && slot->state == SLOT_READY) {
                 slot->last_used = s_frame_counter;
@@ -327,6 +394,7 @@ bool tile_cache_render_viewport(int32_t pan_x, int32_t pan_y)
 
     s_last_pan_x = pan_x;
     s_last_pan_y = pan_y;
+    s_last_zoom = zoom;
     s_last_rendered_epoch = epoch;
     return true;
 }

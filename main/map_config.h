@@ -6,8 +6,30 @@
 // Standard slippy-map tile size.
 #define MAP_TILE_SIZE   256
 
-// Fixed zoom level for v1 (pure pan/drag, no zoom UI yet).
+// Zoom level with real embedded tile imagery (see MAP_TILE_BASE_TX etc.
+// below). Any other zoom in [MAP_MIN_ZOOM, MAP_MAX_ZOOM] shows the
+// procedural fallback pattern from tile_synth.c instead.
 #define MAP_ZOOM        16
+#define MAP_MIN_ZOOM    10
+#define MAP_MAX_ZOOM    19
+
+// Double-tap-to-zoom: max duration/movement for a press to count as a
+// "tap", and max time/distance between two taps to pair them into a
+// double-tap. Heuristic UX values -- expect to retune after trying them on
+// real hardware.
+#define MAP_TAP_MAX_DURATION_US     300000
+#define MAP_TAP_MAX_MOVEMENT_PX     15
+#define MAP_DOUBLE_TAP_WINDOW_US    400000
+#define MAP_DOUBLE_TAP_RADIUS_PX    40
+
+// On-screen zoom +/- buttons (see main/ui_overlay.c), stacked in the
+// bottom-right corner of the logical viewport. Zoom-in is above zoom-out.
+#define MAP_BUTTON_SIZE            80
+#define MAP_BUTTON_MARGIN          20
+#define MAP_BUTTON_GAP             12
+#define MAP_BUTTON_BG_RGB565       0x2104  // near-black
+#define MAP_BUTTON_GLYPH_RGB565    0xFFFF  // white
+#define MAP_BUTTON_GLYPH_THICKNESS 8       // px, the "+"/"-" bar thickness
 
 // Embedded real-tile grid (see main/tile_flash.c, scratchpad/fetch_tiles.py).
 // Centered on 32.8896614814945,-97.34129452988256. Panning outside this
@@ -19,8 +41,11 @@
 
 // Tile cache: worst-case on-screen tiles for a 1280x720 logical viewport at
 // 256px tiles is 6 cols x 4 rows = 24 (same total either orientation, just
-// swapped axes). Add a prefetch margin ring and round up.
-#define MAP_CACHE_SLOTS      64
+// swapped axes). With adjacent-zoom-level prefetch (see tile_cache.c), up to
+// three zoom levels' worth of viewport+margin tiles can be wanted at once
+// (~48 each with the margin ring), so slots are sized well above one level's
+// worth to avoid evicting tiles that are still wanted.
+#define MAP_CACHE_SLOTS      128
 #define MAP_PREFETCH_MARGIN  1   // extra ring of tiles loaded beyond the viewport
 
 // The physical panel is portrait (720x1280), but the Tab5's keyboard dock
