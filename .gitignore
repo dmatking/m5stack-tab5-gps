@@ -12,6 +12,10 @@ __pycache__/
 *.pyc
 .venv/
 
+# Cached raw tile downloads + generated blob (tools/fetch_tiles.py)
+tools/.tile_png_cache/
+tools/tiles.bin
+
 # IDE
 .vscode/
 .idea/

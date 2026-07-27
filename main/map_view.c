@@ -32,8 +32,8 @@ static void map_task(void *arg)
     // without dragging millions of pixels to get there.
     int32_t grid_w = MAP_TILE_GRID_COLS * MAP_TILE_SIZE;
     int32_t grid_h = MAP_TILE_GRID_ROWS * MAP_TILE_SIZE;
-    int32_t pan_x = MAP_TILE_BASE_TX * MAP_TILE_SIZE + (grid_w - board_lcd_width()) / 2;
-    int32_t pan_y = MAP_TILE_BASE_TY * MAP_TILE_SIZE + (grid_h - board_lcd_height()) / 2;
+    int32_t pan_x = MAP_TILE_BASE_TX * MAP_TILE_SIZE + (grid_w - MAP_LOGICAL_W) / 2;
+    int32_t pan_y = MAP_TILE_BASE_TY * MAP_TILE_SIZE + (grid_h - MAP_LOGICAL_H) / 2;
 
     bool dragging = false;
     int16_t last_x = 0, last_y = 0;
@@ -53,8 +53,15 @@ static void map_task(void *arg)
     while (1) {
         ticks_since_log++;
 
-        int16_t x, y;
-        bool pressed = touch_poll(&x, &y);
+        int16_t raw_x, raw_y;
+        bool pressed = touch_poll(&raw_x, &raw_y);
+
+        // Touch reports native portrait panel coordinates; remap to logical
+        // landscape space. Exact inverse of tile_cache.c's placement
+        // transform (native_x=logical_y, native_y=LOGICAL_W-logical_x-w),
+        // for the same PIL-rotate(90)-verified 90 deg CCW rotation.
+        int16_t x = (int16_t)(MAP_LOGICAL_W - 1 - raw_y);
+        int16_t y = raw_x;
 
         if (pressed) {
             if (dragging) {
