@@ -1,0 +1,4 @@
+dependencies:
+  idf: '>=5.5'
+  espressif/esp_lcd_touch_st7123:
+    version: ">=1.0.0"

@@ -1,0 +1,17 @@
+# ESP-IDF build outputs
+build/
+sdkconfig
+sdkconfig.old
+dependencies.lock
+
+# IDF managed components cache
+managed_components/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# IDE
+.vscode/
+.idea/
