@@ -6,9 +6,11 @@
 // Standard slippy-map tile size.
 #define MAP_TILE_SIZE   256
 
-// Zoom level with real embedded tile imagery (see MAP_TILE_BASE_TX etc.
-// below). Any other zoom in [MAP_MIN_ZOOM, MAP_MAX_ZOOM] shows the
-// procedural fallback pattern from tile_synth.c instead.
+// Preferred starting zoom level (used to pick the initial view -- see
+// map_view.c). Embedded real-tile imagery now covers whichever zoom levels
+// are listed in the generated main/map_tiles_data.h (MAP_EMBEDDED_ZOOMS[]);
+// any zoom in [MAP_MIN_ZOOM, MAP_MAX_ZOOM] without an embedded grid shows
+// the procedural fallback pattern from tile_synth.c instead.
 #define MAP_ZOOM        16
 #define MAP_MIN_ZOOM    10
 #define MAP_MAX_ZOOM    19
@@ -30,14 +32,6 @@
 #define MAP_BUTTON_BG_RGB565       0x2104  // near-black
 #define MAP_BUTTON_GLYPH_RGB565    0xFFFF  // white
 #define MAP_BUTTON_GLYPH_THICKNESS 8       // px, the "+"/"-" bar thickness
-
-// Embedded real-tile grid (see main/tile_flash.c, scratchpad/fetch_tiles.py).
-// Centered on 32.8896614814945,-97.34129452988256. Panning outside this
-// range falls back to the procedural pattern from tile_synth.c.
-#define MAP_TILE_BASE_TX     15043
-#define MAP_TILE_BASE_TY     26416
-#define MAP_TILE_GRID_COLS   8
-#define MAP_TILE_GRID_ROWS   10
 
 // Tile cache: worst-case on-screen tiles for a 1280x720 logical viewport at
 // 256px tiles is 6 cols x 4 rows = 24 (same total either orientation, just

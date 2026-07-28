@@ -15,6 +15,7 @@ __pycache__/
 # Cached raw tile downloads + generated blob (tools/fetch_tiles.py)
 tools/.tile_png_cache/
 tools/tiles.bin
+/tiles.bin
 
 # IDE
 .vscode/

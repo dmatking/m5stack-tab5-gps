@@ -18,6 +18,7 @@
 #include "map_view.h"
 #include "board_interface.h"
 #include "map_config.h"
+#include "map_tiles_data.h"
 #include "tile_cache.h"
 #include "touch.h"
 #include "ui_overlay.h"
@@ -75,18 +76,33 @@ static void zoom_at_point(int32_t *pan_x, int32_t *pan_y, int32_t *zoom,
     *zoom = new_zoom;
 }
 
+// Pick the embedded zoom level to start on: MAP_ZOOM if it's actually
+// embedded, else whichever level main/map_tiles_data.h happens to list
+// first (still beats starting at world tile (0,0), which would make every
+// embedded grid unreachable without dragging millions of pixels).
+static const embedded_zoom_t *pick_starting_level(void)
+{
+    for (int i = 0; i < MAP_EMBEDDED_ZOOM_COUNT; i++) {
+        if (MAP_EMBEDDED_ZOOMS[i].zoom == MAP_ZOOM) return &MAP_EMBEDDED_ZOOMS[i];
+    }
+    return MAP_EMBEDDED_ZOOM_COUNT > 0 ? &MAP_EMBEDDED_ZOOMS[0] : NULL;
+}
+
 static void map_task(void *arg)
 {
     (void)arg;
 
-    // Start centered on the embedded real-tile grid (see map_config.h) rather
-    // than world tile (0,0) -- otherwise the real tiles are unreachable
-    // without dragging millions of pixels to get there.
-    int32_t grid_w = MAP_TILE_GRID_COLS * MAP_TILE_SIZE;
-    int32_t grid_h = MAP_TILE_GRID_ROWS * MAP_TILE_SIZE;
-    int32_t pan_x = MAP_TILE_BASE_TX * MAP_TILE_SIZE + (grid_w - MAP_LOGICAL_W) / 2;
-    int32_t pan_y = MAP_TILE_BASE_TY * MAP_TILE_SIZE + (grid_h - MAP_LOGICAL_H) / 2;
+    int32_t pan_x = 0, pan_y = 0;
     int32_t zoom = MAP_ZOOM;
+
+    const embedded_zoom_t *start = pick_starting_level();
+    if (start) {
+        int32_t grid_w = start->cols * MAP_TILE_SIZE;
+        int32_t grid_h = start->rows * MAP_TILE_SIZE;
+        pan_x = start->base_tx * MAP_TILE_SIZE + (grid_w - MAP_LOGICAL_W) / 2;
+        pan_y = start->base_ty * MAP_TILE_SIZE + (grid_h - MAP_LOGICAL_H) / 2;
+        zoom = start->zoom;
+    }
 
     // Single-finger drag state.
     bool dragging = false;
