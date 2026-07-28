@@ -74,7 +74,8 @@ static uint8_t                  *s_fbs[2]    = {0};  // hardware double-buffers 
 static int                       s_back_idx  = 0;    // index of the back (render) buffer
 static uint8_t                  *s_backbuf   = NULL; // software render buffer (PSRAM)
 
-static i2c_master_bus_handle_t s_i2c_bus = NULL;  // shared I2C bus 0 (IO expanders + touch)
+static i2c_master_bus_handle_t s_i2c_bus     = NULL;  // shared I2C bus 0 (IO expanders + touch)
+static i2c_master_dev_handle_t s_pi4ioe2_dev = NULL;  // kept around for board_set_usb5v_en()
 
 // --- ST7123 vendor init sequence (M5Stack Tab5, post-Oct-2025 hardware) ---
 static const st7123_lcd_init_cmd_t s_st7123_init[] = {
@@ -185,6 +186,7 @@ static void pi4ioe_init(void)
         .scl_speed_hz    = 400000,
     };
     ESP_ERROR_CHECK(i2c_master_bus_add_device(s_i2c_bus, &dev_cfg2, &dev2));
+    s_pi4ioe2_dev = dev2;
 
     // PI4IOE2: P0=WLAN_PWR_EN, P3=USB5V_EN, P7=CHG_EN
     wb[0] = PI4IO_REG_CHIP_RESET; wb[1] = 0xFF;
@@ -206,6 +208,17 @@ static void pi4ioe_init(void)
     // Drive WLAN_PWR_EN(P0), USB5V_EN(P3) high
     wb[0] = PI4IO_REG_OUT_SET; wb[1] = 0b00001001;
     i2c_master_transmit(dev2, wb, 2, I2C_TIMEOUT_MS);
+}
+
+void board_set_usb5v_en(bool enable)
+{
+    if (!s_pi4ioe2_dev) return;  // pi4ioe_init() hasn't run
+    // WLAN_PWR_EN(P0) stays high either way; only USB5V_EN(P3) toggles. Must
+    // be disabled before using the USB-A/OTG port as a USB *device* (e.g.
+    // mass storage) -- otherwise this board's own 5V boost fights the host
+    // PC's VBUS on the same line.
+    uint8_t wb[2] = { PI4IO_REG_OUT_SET, (uint8_t)(enable ? 0b00001001 : 0b00000001) };
+    i2c_master_transmit(s_pi4ioe2_dev, wb, 2, I2C_TIMEOUT_MS);
 }
 
 // --- RGB565 helpers ---

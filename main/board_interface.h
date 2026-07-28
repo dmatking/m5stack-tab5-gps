@@ -77,3 +77,10 @@ void board_lcd_commit(void);
 esp_lcd_panel_handle_t    board_lcd_panel_handle(void);
 esp_lcd_panel_io_handle_t board_lcd_panel_io_handle(void);
 i2c_master_bus_handle_t   board_i2c_bus_handle(void);
+
+// Toggle the USB-A/OTG port's 5V VBUS boost (on by default after board_init()
+// for host-mode peripherals like a mouse/keyboard). Must be disabled before
+// using that port as a USB *device* (e.g. mass storage) -- otherwise the
+// board's own boost fights a host PC's VBUS on the same line. No-op if
+// board_init() hasn't run yet.
+void board_set_usb5v_en(bool enable);

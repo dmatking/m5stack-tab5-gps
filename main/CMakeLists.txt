@@ -1,5 +1,5 @@
 set(EXTRA_REQUIRES "")
-set(EXTRA_SRCS "sd_card.c" "ui_overlay.c" "tile_flash.c" "map_view.c" "tile_cache.c" "tile_synth.c" "touch.c" "")
+set(EXTRA_SRCS "usb_msc.c" "sd_card.c" "ui_overlay.c" "tile_flash.c" "map_view.c" "tile_cache.c" "tile_synth.c" "touch.c" "")
 set(EXTRA_DEFINES "")
 
 if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/main.cmake.extra")

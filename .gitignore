@@ -1,7 +1,9 @@
 # ESP-IDF build outputs
 build/
+build_*/
 sdkconfig
 sdkconfig.old
+sdkconfig.sdxfer
 dependencies.lock
 
 # IDF managed components cache

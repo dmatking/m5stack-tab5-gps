@@ -1,2 +1,22 @@
-list(APPEND EXTRA_REQUIRES "esp_lcd_st7123" "esp_mm" "esp_hw_support" "esp_driver_ledc" "esp_driver_gpio" "esp_driver_i2c" "esp_driver_ppa" "esp_timer" "esp_partition" "esp_driver_jpeg" "fatfs" "sdmmc" "esp_driver_sdmmc")
-list(APPEND EXTRA_SRCS "touch.c" "tile_synth.c" "tile_flash.c" "tile_cache.c" "ui_overlay.c" "map_view.c" "sd_card.c")
+list(APPEND EXTRA_REQUIRES "esp_lcd_st7123" "esp_mm" "esp_hw_support" "esp_driver_ledc" "esp_driver_gpio" "esp_driver_i2c" "esp_driver_ppa" "esp_timer" "esp_partition" "esp_driver_jpeg" "fatfs" "sdmmc" "esp_driver_sdmmc" "esp_driver_usb_serial_jtag")
+list(APPEND EXTRA_SRCS "touch.c" "tile_synth.c" "tile_flash.c" "tile_cache.c" "ui_overlay.c" "map_view.c" "sd_card.c" "usb_msc.c" "sd_xfer.c")
+
+# USB_MSC_MODE=1 in the environment builds a firmware that, instead of the
+# normal map app, exposes the SD card as a USB mass-storage drive over the
+# USB-A/OTG port (main/usb_msc.c) -- a one-off dev-tool build for copying
+# files onto the card without a card reader. Unset (the default) builds the
+# normal map-app firmware unchanged. See the "USB mass-storage mode" plan.
+if(DEFINED ENV{USB_MSC_MODE} AND NOT "$ENV{USB_MSC_MODE}" STREQUAL "")
+    list(APPEND EXTRA_DEFINES "APP_USB_MSC_MODE")
+endif()
+
+# SD_XFER_MODE=1 -- fallback to USB_MSC_MODE when that proved unreliable:
+# receives a file over the console (COM17) and writes it to the SD card
+# (main/sd_xfer.c). Requires building with the sdkconfig.sdxfer.defaults
+# overlay (see that file) so COM17 is the *primary*, readable console --
+# pass it via -B <dir> -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.sdxfer.defaults"
+# on the idf.py command line, not handled here (too late in the build to
+# set SDKCONFIG_DEFAULTS from this file).
+if(DEFINED ENV{SD_XFER_MODE} AND NOT "$ENV{SD_XFER_MODE}" STREQUAL "")
+    list(APPEND EXTRA_DEFINES "APP_SD_XFER_MODE")
+endif()

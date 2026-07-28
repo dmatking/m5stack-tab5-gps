@@ -30,6 +30,13 @@ CONFIG_ESP_CONSOLE_ROM_SERIAL_PORT_NUM=0
 # Main task stack
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
 
+# TinyUSB mass-storage (main/usb_msc.c) -- exposes the microSD card as a
+# USB drive over the USB-A/OTG port, gated at runtime behind USB_MSC_MODE
+# (see main.cmake.extra); the driver itself must still be enabled here to
+# compile in either build.
+CONFIG_TINYUSB_MSC_ENABLED=y
+CONFIG_FATFS_LFN_HEAP=y
+
 # PSRAM (HEX mode, 200 MHz)
 CONFIG_IDF_EXPERIMENTAL_FEATURES=y
 CONFIG_SPIRAM=y

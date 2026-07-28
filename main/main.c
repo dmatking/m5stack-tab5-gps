@@ -11,8 +11,10 @@
 #include "sd_card.h"
 #include "tile_cache.h"
 #include "tile_flash.h"
+#include "sd_xfer.h"
 #include "touch.h"
 #include "ui_overlay.h"
+#include "usb_msc.h"
 
 static const char *TAG = "APP";
 
@@ -51,6 +53,23 @@ void app_main(void)
     ESP_LOGI(TAG, "app_main starting");
     board_init();
 
+#ifdef APP_USB_MSC_MODE
+    // One-off dev-tool build: expose the SD card as a USB drive and stop --
+    // see main/usb_msc.c and the "USB mass-storage mode" plan. Doesn't touch
+    // the LCD/touch/tile stack at all; to go back to the normal map app,
+    // just rebuild/reflash with USB_MSC_MODE unset.
+    if (!usb_msc_start()) {
+        ESP_LOGE(TAG, "USB mass storage init failed -- nothing else to do in this build.");
+    }
+    return;
+#elif defined(APP_SD_XFER_MODE)
+    // One-off dev-tool build: receive a file over the console (COM17) and
+    // write it to the SD card -- see main/sd_xfer.c. Requires the
+    // sdkconfig.sdxfer.defaults overlay (COM17 as primary console); doesn't
+    // touch the LCD/touch/tile stack at all. sd_xfer_run() never returns.
+    sd_xfer_run();
+    return;
+#else
     if (!board_has_lcd()) {
         ESP_LOGE(TAG, "Board has no LCD configured -- nothing to do.");
         return;
@@ -68,4 +87,5 @@ void app_main(void)
     tile_cache_init();
     ui_overlay_init();
     map_view_start();
+#endif
 }

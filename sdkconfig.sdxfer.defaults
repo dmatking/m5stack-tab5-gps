@@ -1,0 +1,13 @@
+# Build-variant overlay for SD_XFER_MODE (see main/sd_xfer.c). Applied on
+# top of sdkconfig.defaults via SDKCONFIG_DEFAULTS, not standalone.
+#
+# The base config makes real UART0 the primary console and USB-Serial-JTAG
+# (COM17) only the *secondary* console. The secondary path is write-only
+# (see esp_stdio's console_read(), which only ever reads fd_primary) --
+# stdin never sees anything sent over COM17 under the base config. This
+# override makes USB-Serial-JTAG the primary console instead, so
+# sd_xfer.c's fgets()/printf() over stdin/stdout work over the same COM17
+# port already used for flashing. Matches the pattern ESP-IDF's own
+# examples/peripherals/usb/device/tusb_msc P4 example uses for the same
+# reason (see its main.c's ESP_CONSOLE_USB_SERIAL_JTAG branch).
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
