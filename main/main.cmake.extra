@@ -1,5 +1,5 @@
-list(APPEND EXTRA_REQUIRES "esp_lcd_st7123" "esp_mm" "esp_hw_support" "esp_driver_ledc" "esp_driver_gpio" "esp_driver_i2c" "esp_driver_ppa" "esp_timer" "esp_partition" "esp_driver_jpeg" "fatfs" "sdmmc" "esp_driver_sdmmc" "esp_driver_usb_serial_jtag")
-list(APPEND EXTRA_SRCS "touch.c" "tile_synth.c" "tile_flash.c" "tile_cache.c" "ui_overlay.c" "map_view.c" "sd_card.c" "usb_msc.c" "sd_xfer.c")
+list(APPEND EXTRA_REQUIRES "esp_lcd_st7123" "esp_mm" "esp_hw_support" "esp_driver_ledc" "esp_driver_gpio" "esp_driver_i2c" "esp_driver_ppa" "esp_timer" "esp_partition" "esp_driver_jpeg" "fatfs" "sdmmc" "esp_driver_sdmmc" "esp_driver_usb_serial_jtag" "esp_driver_uart")
+list(APPEND EXTRA_SRCS "touch.c" "tile_synth.c" "tile_flash.c" "tile_cache.c" "ui_overlay.c" "map_view.c" "sd_card.c" "usb_msc.c" "sd_xfer.c" "gps.c")
 
 # USB_MSC_MODE=1 in the environment builds a firmware that, instead of the
 # normal map app, exposes the SD card as a USB mass-storage drive over the

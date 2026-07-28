@@ -7,6 +7,7 @@
 #include "esp_log.h"
 
 #include "board_interface.h"
+#include "gps.h"
 #include "map_view.h"
 #include "sd_card.h"
 #include "tile_cache.h"
@@ -78,6 +79,8 @@ void app_main(void)
     if (!touch_init()) {
         ESP_LOGW(TAG, "Touch unavailable -- map will render but won't be draggable.");
     }
+
+    gps_init();
 
     if (sd_card_mount()) {
         sd_card_list_root();
