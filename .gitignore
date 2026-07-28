@@ -22,3 +22,17 @@ tools/tiles.bin
 # IDE
 .vscode/
 .idea/
+
+# Reference photos/screenshots dropped in the working tree (e.g. hardware
+# pinout photos taken during debugging) -- not project assets, not meant
+# to be committed. Intentional image assets go under assets/ instead.
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.webp
+*.heic
+*.tif
+*.tiff
+!assets/**
