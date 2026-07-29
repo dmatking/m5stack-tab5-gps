@@ -17,6 +17,7 @@
 
 #include "map_view.h"
 #include "board_interface.h"
+#include "gps.h"
 #include "map_config.h"
 #include "map_tiles_data.h"
 #include "tile_cache.h"
@@ -26,6 +27,7 @@
 #include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -130,8 +132,29 @@ static void map_task(void *arg)
     uint32_t redraw_interval_count = 0;
     uint32_t ticks_since_log = 0;
 
+    gps_state_t last_gps_state;
+    memset(&last_gps_state, 0, sizeof(last_gps_state));
+    bool last_log_active = false;
+
     while (1) {
         ticks_since_log++;
+
+        // The map's own dirty-check (tile_cache_render_viewport, below)
+        // only knows about pan/zoom/tile-arrival -- it has no idea the
+        // status bar's content changed, so it would otherwise skip
+        // redrawing while the map itself is idle. Bump the same epoch
+        // counter background tile loads use whenever GPS state (or the SD
+        // write-health the status bar's icon reflects) moves -- a card
+        // pulled mid-session should turn the icon red promptly, not just
+        // whenever the map happens to redraw for some other reason.
+        gps_state_t cur_gps_state = gps_get_state();
+        bool cur_log_active = gps_log_active();
+        if (memcmp(&cur_gps_state, &last_gps_state, sizeof(cur_gps_state)) != 0 ||
+            cur_log_active != last_log_active) {
+            last_gps_state = cur_gps_state;
+            last_log_active = cur_log_active;
+            tile_cache_mark_dirty();
+        }
 
         touch_point_t raw_pt;
         bool pressed = touch_poll_multi(&raw_pt, 1) >= 1;
@@ -195,6 +218,7 @@ static void map_task(void *arg)
 
         if (tile_cache_render_viewport(pan_x, pan_y, zoom)) {
             ui_overlay_draw_zoom_buttons();
+            ui_overlay_draw_gps_status();
             board_lcd_commit();
 
             if (last_redraw_us >= 0) {

@@ -80,11 +80,11 @@ void app_main(void)
         ESP_LOGW(TAG, "Touch unavailable -- map will render but won't be draggable.");
     }
 
-    gps_init();
-
     if (sd_card_mount()) {
         sd_card_list_root();
     }
+
+    gps_init();  // opens a log file on /sdcard if mounted -- must come after sd_card_mount()
 
     tile_flash_init();
     tile_cache_init();

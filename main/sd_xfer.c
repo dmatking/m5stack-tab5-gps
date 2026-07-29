@@ -1,23 +1,34 @@
 // Copyright 2025-2026 David M. King
 // SPDX-License-Identifier: Apache-2.0
 //
-// Line-based file receiver over the console (COM17/USB-Serial-JTAG),
+// Line-based file transfer over the console (COM17/USB-Serial-JTAG),
 // fallback to main/usb_msc.c when USB mass storage proved unreliable over
-// the available cable. Protocol (see tools/send_to_sd.py for the sender):
+// the available cable. Two directions, both text/line-based rather than a
+// raw binary protocol on the same channel esp_log also writes to -- a stray
+// log line interleaved mid-transfer just fails to match "XFER " and gets
+// ignored by the PC side, instead of corrupting a binary frame.
 //
+// Upload, PC -> SD card (see tools/send_to_sd.py):
 //   PC -> ESP32:
 //     XFER BEGIN <filename> <size>\n
 //     XFER DATA <base64 chunk>\n         (repeated)
 //     XFER END <crc32_hex>\n
 //   ESP32 -> PC:
-//     XFER READY\n                        (at boot, and after each transfer)
 //     XFER OK <bytes_written> <crc32_hex>\n
 //     XFER FAIL <reason>\n
 //
-// Deliberately text/line-based rather than a raw binary protocol on the
-// same channel esp_log also writes to -- a stray log line interleaved
-// mid-transfer just fails to match "XFER " and gets ignored by the PC
-// script, instead of corrupting a binary frame.
+// Download, SD card -> PC (see tools/recv_from_sd.py):
+//   PC -> ESP32:
+//     XFER GET <filename>\n
+//   ESP32 -> PC:
+//     XFER SIZE <size>\n
+//     XFER DATA <base64 chunk>\n         (repeated)
+//     XFER END <crc32_hex>\n
+//     XFER FAIL <reason>\n               (instead of SIZE, e.g. file not found)
+//
+// Common:
+//   ESP32 -> PC:
+//     XFER READY\n                        (at boot, and after each transfer)
 
 #include "sd_xfer.h"
 
@@ -58,9 +69,35 @@ static uint8_t s_read_buf[USJ_READ_BUF_SIZE];
 static size_t  s_read_pos = 0;
 static size_t  s_read_len = 0;
 
+// usb_serial_jtag_write_bytes() returns the number of bytes actually
+// written and is short-write-capable -- its own header says blocking mode
+// only blocks "for a short period if the TX FIFO is full", not until the
+// whole request is drained. The 4096-byte TX ring is smaller than a full
+// base64 DATA line (~8000 bytes for RAW_CHUNK_SIZE=6000), so a single call
+// silently dropped the back half of large writes until this loop was added
+// (confirmed on real hardware: every full-size download chunk decoded to 0
+// bytes on the PC side, while the final undersized chunk came through fine).
+static void usj_write_all(const uint8_t *data, size_t len)
+{
+    size_t sent = 0;
+    while (sent < len) {
+        int n = usb_serial_jtag_write_bytes(data + sent, len - sent, portMAX_DELAY);
+        if (n <= 0) {
+            // A busy `continue` here (no yield) starved the USB stack's own
+            // interrupt servicing badly enough that Windows lost the device
+            // mid-transfer ("ClearCommError failed") -- same class of bug as
+            // [[feedback-generator-task-pacing]]: bulk transfers need a real
+            // vTaskDelay, not a tight spin, to let the rest of the system run.
+            vTaskDelay(pdMS_TO_TICKS(1));
+            continue;
+        }
+        sent += (size_t)n;
+    }
+}
+
 static void usj_write_str(const char *s)
 {
-    usb_serial_jtag_write_bytes((const uint8_t *)s, strlen(s), portMAX_DELAY);
+    usj_write_all((const uint8_t *)s, strlen(s));
 }
 
 static void usj_printf(const char *fmt, ...)
@@ -141,6 +178,79 @@ static int b64_decode(const char *in, size_t in_len, uint8_t *out)
     return out_len;
 }
 
+// --- Minimal base64 encoder (standard alphabet, '=' padding) ---
+static int b64_encode(const uint8_t *in, size_t in_len, char *out)
+{
+    static const char *alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    size_t i = 0;
+    int out_len = 0;
+    for (; i + 3 <= in_len; i += 3) {
+        uint32_t v = ((uint32_t)in[i] << 16) | ((uint32_t)in[i + 1] << 8) | in[i + 2];
+        out[out_len++] = alpha[(v >> 18) & 0x3F];
+        out[out_len++] = alpha[(v >> 12) & 0x3F];
+        out[out_len++] = alpha[(v >> 6) & 0x3F];
+        out[out_len++] = alpha[v & 0x3F];
+    }
+    size_t rem = in_len - i;
+    if (rem == 1) {
+        uint32_t v = (uint32_t)in[i] << 16;
+        out[out_len++] = alpha[(v >> 18) & 0x3F];
+        out[out_len++] = alpha[(v >> 12) & 0x3F];
+        out[out_len++] = '=';
+        out[out_len++] = '=';
+    } else if (rem == 2) {
+        uint32_t v = ((uint32_t)in[i] << 16) | ((uint32_t)in[i + 1] << 8);
+        out[out_len++] = alpha[(v >> 18) & 0x3F];
+        out[out_len++] = alpha[(v >> 12) & 0x3F];
+        out[out_len++] = alpha[(v >> 6) & 0x3F];
+        out[out_len++] = '=';
+    }
+    return out_len;
+}
+
+static void do_download(const char *filename)
+{
+    char path[300];
+    snprintf(path, sizeof(path), "%s/%s", SD_MOUNT_POINT, filename);
+
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        ESP_LOGE(TAG, "fopen(%s) failed", path);
+        usj_printf("XFER FAIL cannot open %s\n", filename);
+        return;
+    }
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    ESP_LOGI(TAG, "sending %s (%ld bytes)", filename, size);
+    usj_printf("XFER SIZE %ld\n", size);
+
+    // Whole "XFER DATA <b64>\n" line built in one buffer and sent with a
+    // single usj_write_all() call -- three separate writes (prefix/payload/
+    // newline) left a window where a log line from another task could land
+    // in between and split the frame; one call closes that window (down to
+    // whatever usj_write_all's own internal retry loop still leaves open,
+    // which in practice has been reliable).
+    static uint8_t line_buf[10 + B64_CHUNK_SIZE + 1];
+    memcpy(line_buf, "XFER DATA ", 10);
+
+    uint32_t crc = 0;
+    long total = 0;
+    while (total < size) {
+        size_t n = fread(s_raw, 1, RAW_CHUNK_SIZE, f);
+        if (n == 0) break;
+        crc = crc32_update(crc, s_raw, n);
+        int b64_len = b64_encode(s_raw, n, (char *)line_buf + 10);
+        line_buf[10 + b64_len] = '\n';
+        usj_write_all(line_buf, 10 + (size_t)b64_len + 1);
+        total += (long)n;
+    }
+    fclose(f);
+    usj_printf("XFER END %08lx\n", (unsigned long)crc);
+    ESP_LOGI(TAG, "%s sent: %ld bytes, crc32=%08lx", filename, total, (unsigned long)crc);
+}
+
 static void do_transfer(const char *filename, long expected_size)
 {
     char path[300];
@@ -217,6 +327,8 @@ void sd_xfer_run(void)
         long size = 0;
         if (sscanf(s_line, "XFER BEGIN %127s %ld", filename, &size) == 2) {
             do_transfer(filename, size);
+        } else if (sscanf(s_line, "XFER GET %127s", filename) == 1) {
+            do_download(filename);
         }
         // any other line while idle (including log noise) is ignored
     }

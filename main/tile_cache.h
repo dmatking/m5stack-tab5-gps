@@ -21,3 +21,9 @@ void tile_cache_init(void);
 // unchanged screen. When it returns true, the caller should call
 // board_lcd_commit() to flip.
 bool tile_cache_render_viewport(int32_t pan_x, int32_t pan_y, int32_t zoom);
+
+// Force the next tile_cache_render_viewport() call to redraw even if pan/
+// zoom haven't moved and no tile just finished loading -- for overlays
+// (e.g. the GPS status bar) whose own content changed independently of the
+// map. Uses the same epoch counter background tile completions already bump.
+void tile_cache_mark_dirty(void);

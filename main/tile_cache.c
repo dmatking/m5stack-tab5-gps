@@ -228,6 +228,21 @@ static bool ppa_blit_tile(const uint16_t *src, int src_x, int src_y, int w, int 
     return true;
 }
 
+// PPA's *fill* operation expects fill_color_val byte-packed as 0x00RRGGBB,
+// not a packed 16-bit R5G6B5 value, despite PPA_FILL_COLOR_MODE_RGB565's
+// name -- confirmed empirically on real hardware, see the matching helper
+// and comment in ui_overlay.c's fill_logical_rect(). Doesn't affect this
+// file's PPA scale/rotate/mirror blit path (ppa_blit_tile, above), which
+// reads real pixel data and has always rendered tile colors correctly --
+// only this fill path, used for the not-yet-loaded placeholder color.
+static inline uint32_t rgb565_to_ppa_fill_val(uint16_t rgb565)
+{
+    uint8_t r8 = (uint8_t)(((rgb565 >> 11) & 0x1F) * 255 / 31);
+    uint8_t g8 = (uint8_t)(((rgb565 >> 5) & 0x3F) * 255 / 63);
+    uint8_t b8 = (uint8_t)((rgb565 & 0x1F) * 255 / 31);
+    return ((uint32_t)r8 << 16) | ((uint32_t)g8 << 8) | b8;
+}
+
 static bool ppa_fill_rect(uint8_t *fb, int fb_w, int fb_h, int x, int y, int w, int h, uint16_t color)
 {
     ppa_fill_oper_config_t fill = {
@@ -238,7 +253,7 @@ static bool ppa_fill_rect(uint8_t *fb, int fb_w, int fb_h, int x, int y, int w, 
             .fill_cm = PPA_FILL_COLOR_MODE_RGB565,
         },
         .fill_block_w = (uint32_t)w, .fill_block_h = (uint32_t)h,
-        .fill_color_val = color,
+        .fill_color_val = rgb565_to_ppa_fill_val(color),
         .mode = PPA_TRANS_MODE_NON_BLOCKING,
     };
     esp_err_t err = ppa_do_fill(s_ppa_fill, &fill);
@@ -288,6 +303,11 @@ static void request_adjacent_zoom(int32_t pan_x, int32_t pan_y, int32_t zoom, in
             request_tile(tx, ty, adj_zoom);
         }
     }
+}
+
+void tile_cache_mark_dirty(void)
+{
+    atomic_fetch_add(&s_ready_epoch, 1);
 }
 
 bool tile_cache_render_viewport(int32_t pan_x, int32_t pan_y, int32_t zoom)

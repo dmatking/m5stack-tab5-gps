@@ -45,6 +45,12 @@ gps_state_t gps_get_state(void);
 // True if either GGA or RMC reports a fix.
 bool gps_has_fix(void);
 
+// True if the SD card is mounted, the log file is open, and the most
+// recent write to it (fprintf+fflush+fsync) actually succeeded -- not just
+// that fopen() succeeded at boot. A card that mounts fine but is full,
+// write-protected, or gets pulled mid-session should show up here.
+bool gps_log_active(void);
+
 #ifdef __cplusplus
 }
 #endif

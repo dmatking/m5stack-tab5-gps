@@ -19,15 +19,19 @@
 
 #include <ctype.h>
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "driver/gpio.h"
 #include "driver/uart.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "sd_card.h"
 
 #define GPS_UART_NUM UART_NUM_1
 #define GPS_RX_GPIO  GPIO_NUM_38  // Tab5 M5-Bus RXD0 (bus pin 13)
@@ -35,11 +39,14 @@
 #define GPS_BAUD     115200
 
 #define GPS_LINE_MAX 128
+#define GPS_LOG_PATH SD_MOUNT_POINT "/gps_log.txt"
 
 static const char *TAG = "GPS";
 
 static gps_state_t s_state;
 static SemaphoreHandle_t s_mutex;
+static FILE *s_log_f;  // raw NMEA log on the SD card, NULL if unavailable
+static volatile bool s_log_ok = false;  // most recent write (or the initial open) succeeded
 
 // ---------------------------------------------------------------------------
 // NMEA field parsers
@@ -95,21 +102,42 @@ static bool parse_lat_lon(const char *lat_field, const char *ns_field,
     return true;
 }
 
+// strtok_r() treats a run of consecutive delimiters as one -- fine for
+// whitespace-separated text, wrong for NMEA, whose empty fields (",,,,,,")
+// are common and semantically meaningful (field absent, not "field merged
+// with its neighbor"). Using strtok_r here silently shifted every field
+// after an empty one, e.g. letting HDOP leak into what should have been an
+// empty longitude field. This walks the string manually instead, splitting
+// on every comma and returning "" for empty fields rather than skipping them.
+static char *next_field(char **cursor)
+{
+    if (!*cursor) return NULL;
+    char *start = *cursor;
+    char *comma = strchr(start, ',');
+    if (comma) {
+        *comma = '\0';
+        *cursor = comma + 1;
+    } else {
+        *cursor = NULL;
+    }
+    return start;
+}
+
 // ---------------------------------------------------------------------------
 // Sentence handlers (operate on a local copy, then lock to update state)
 // ---------------------------------------------------------------------------
 
 static void handle_gga(char *sentence)
 {
-    char *sp = NULL;
-    (void)strtok_r(sentence, ",", &sp);         // $GxGGA
-    char *utc  = strtok_r(NULL, ",", &sp);
-    char *lat  = strtok_r(NULL, ",", &sp);
-    char *ns   = strtok_r(NULL, ",", &sp);
-    char *lon  = strtok_r(NULL, ",", &sp);
-    char *ew   = strtok_r(NULL, ",", &sp);
-    char *fix  = strtok_r(NULL, ",", &sp);
-    char *sats = strtok_r(NULL, ",", &sp);
+    char *cursor = sentence;
+    (void)next_field(&cursor);         // $GxGGA
+    char *utc  = next_field(&cursor);
+    char *lat  = next_field(&cursor);
+    char *ns   = next_field(&cursor);
+    char *lon  = next_field(&cursor);
+    char *ew   = next_field(&cursor);
+    char *fix  = next_field(&cursor);
+    char *sats = next_field(&cursor);
 
     gps_state_t tmp;
     xSemaphoreTake(s_mutex, portMAX_DELAY);
@@ -147,17 +175,17 @@ static void handle_gga(char *sentence)
 
 static void handle_rmc(char *sentence)
 {
-    char *sp = NULL;
-    (void)strtok_r(sentence, ",", &sp);         // $GxRMC
-    char *utc    = strtok_r(NULL, ",", &sp);
-    char *status = strtok_r(NULL, ",", &sp);
-    char *lat    = strtok_r(NULL, ",", &sp);
-    char *ns     = strtok_r(NULL, ",", &sp);
-    char *lon    = strtok_r(NULL, ",", &sp);
-    char *ew     = strtok_r(NULL, ",", &sp);
-    char *speed  = strtok_r(NULL, ",", &sp);
-    char *track  = strtok_r(NULL, ",", &sp);
-    char *date   = strtok_r(NULL, ",", &sp);
+    char *cursor = sentence;
+    (void)next_field(&cursor);         // $GxRMC
+    char *utc    = next_field(&cursor);
+    char *status = next_field(&cursor);
+    char *lat    = next_field(&cursor);
+    char *ns     = next_field(&cursor);
+    char *lon    = next_field(&cursor);
+    char *ew     = next_field(&cursor);
+    char *speed  = next_field(&cursor);
+    char *track  = next_field(&cursor);
+    char *date   = next_field(&cursor);
 
     gps_state_t tmp;
     xSemaphoreTake(s_mutex, portMAX_DELAY);
@@ -237,6 +265,21 @@ static void gps_reader_task(void *arg)
             if (c == '\r' || c == '\n') {
                 if (line_len > 0) {
                     line[line_len] = '\0';
+                    if (s_log_f) {
+                        bool ok = fprintf(s_log_f, "%lld %s\n",
+                                          (long long)(esp_timer_get_time() / 1000), line) >= 0;
+                        // fflush() only pushes data into FatFs's write path (f_write) --
+                        // the directory entry's file-size field isn't committed to the
+                        // card until f_sync()/f_close(). This device gets no clean
+                        // shutdown (battery just dies outdoors), so without an explicit
+                        // fsync() here, a sudden power loss can leave the file's data
+                        // clusters written but its on-disk length still 0 -- confirmed
+                        // on real hardware: a full outdoor logging session round-tripped
+                        // as an empty file until this was added.
+                        ok = ok && (fflush(s_log_f) == 0);
+                        ok = ok && (fsync(fileno(s_log_f)) == 0);
+                        s_log_ok = ok;  // drives the SD-status icon in ui_overlay.c
+                    }
                     handle_sentence(line);
                     line_len = 0;
                 }
@@ -260,6 +303,21 @@ void gps_init(void)
     memset(&s_state, 0, sizeof(s_state));
     s_mutex = xSemaphoreCreateMutex();
     configASSERT(s_mutex);
+
+    if (sd_card_is_mounted()) {
+        s_log_f = fopen(GPS_LOG_PATH, "a");  // append -- accumulate across boots
+        if (s_log_f) {
+            bool ok = fprintf(s_log_f, "--- boot, uptime_ms t0 ---\n") >= 0;
+            ok = ok && (fflush(s_log_f) == 0);
+            ok = ok && (fsync(fileno(s_log_f)) == 0);
+            s_log_ok = ok;
+            ESP_LOGI(TAG, "logging raw NMEA to %s", GPS_LOG_PATH);
+        } else {
+            ESP_LOGW(TAG, "could not open %s for logging", GPS_LOG_PATH);
+        }
+    } else {
+        ESP_LOGW(TAG, "SD card not mounted -- no NMEA log this session");
+    }
 
     const uart_config_t cfg = {
         .baud_rate  = GPS_BAUD,
@@ -295,4 +353,9 @@ bool gps_has_fix(void)
     bool fix = s_state.gga_fix || s_state.rmc_fix;
     xSemaphoreGive(s_mutex);
     return fix;
+}
+
+bool gps_log_active(void)
+{
+    return s_log_f != NULL && s_log_ok;
 }
