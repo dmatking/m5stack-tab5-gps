@@ -11,7 +11,8 @@
 #include "map_view.h"
 #include "sd_card.h"
 #include "tile_cache.h"
-#include "tile_flash.h"
+#include "tile_jpeg.h"
+#include "tile_sd.h"
 #include "sd_xfer.h"
 #include "touch.h"
 #include "ui_overlay.h"
@@ -19,10 +20,9 @@
 
 static const char *TAG = "APP";
 
-// Temporary diagnostic: list whatever's on the SD card's root directory, to
-// prove the FAT filesystem layer actually works (not just that SDMMC
-// bring-up succeeded). Superseded once real tile-reading code (tile_sd.c)
-// exists -- see the "SD card read verification" plan.
+// Diagnostic: list whatever's on the SD card's root directory -- useful for
+// confirming tile_sd.c's shard-file naming convention landed correctly,
+// alongside gps_log.txt/tiles.bin/etc.
 static void sd_card_list_root(void)
 {
     DIR *dir = opendir(SD_MOUNT_POINT);
@@ -86,7 +86,8 @@ void app_main(void)
 
     gps_init();  // opens a log file on /sdcard if mounted -- must come after sd_card_mount()
 
-    tile_flash_init();
+    tile_jpeg_init();  // shared decoder -- must come before tile_sd_init()
+    tile_sd_init();  // scans /sdcard for shard files -- must come after sd_card_mount()
     tile_cache_init();
     ui_overlay_init();
     map_view_start();

@@ -19,6 +19,13 @@ tools/.tile_png_cache/
 tools/tiles.bin
 /tiles.bin
 
+# SD-card tile shard output (tools/fetch_tiles.py --target sd) -- large
+# regenerable binary blobs, same reasoning as tiles.bin above.
+tiles_sd_out/
+tools_sd_test/
+tools_sd_test_single/
+tiles_sd_*.bin
+
 # IDE
 .vscode/
 .idea/

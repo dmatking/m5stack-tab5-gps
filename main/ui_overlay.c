@@ -194,7 +194,7 @@ static void draw_string_logical(uint8_t *fb, int nat_w, int nat_h, int lx, int l
     }
 }
 
-void ui_overlay_draw_gps_status(void)
+void ui_overlay_draw_gps_status(int32_t zoom)
 {
     uint8_t *fb = board_lcd_hw_framebuffer();
     if (!fb) return;
@@ -211,10 +211,10 @@ void ui_overlay_draw_gps_status(void)
 
     char line[80];
     if (fix && st.latlon_valid) {
-        snprintf(line, sizeof(line), "FIX  SATS:%2d  LAT:%+10.6f  LON:%+11.6f",
-                 st.sats_in_use, st.latitude_deg, st.longitude_deg);
+        snprintf(line, sizeof(line), "Z%-2ld  FIX  SATS:%2d  LAT:%+10.6f  LON:%+11.6f",
+                 (long)zoom, st.sats_in_use, st.latitude_deg, st.longitude_deg);
     } else {
-        snprintf(line, sizeof(line), "NO FIX  SATS:%2d", st.sats_in_use);
+        snprintf(line, sizeof(line), "Z%-2ld  NO FIX  SATS:%2d", (long)zoom, st.sats_in_use);
     }
 
     int ty = (STATUS_BAR_H - STATUS_CHAR_H) / 2;

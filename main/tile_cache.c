@@ -10,7 +10,7 @@
 #include "tile_cache.h"
 #include "board_interface.h"
 #include "map_config.h"
-#include "tile_flash.h"
+#include "tile_sd.h"
 #include "tile_synth.h"
 
 #include <assert.h>
@@ -140,7 +140,11 @@ static void generator_task(void *arg)
         tile_slot_t *slot = find_slot(req.tx, req.ty, req.zoom);
         if (!slot || slot->state != SLOT_GENERATING) continue; // stale/evicted
 
-        if (!tile_flash_read(req.tx, req.ty, req.zoom, slot->pixels)) {
+        // SD-only for now (flash embedding deliberately disabled -- see
+        // main.c) while verifying the SD read/decode path in isolation.
+        // Procedural synth is still the catch-all for anything outside the
+        // SD-covered area.
+        if (!tile_sd_read(req.tx, req.ty, req.zoom, slot->pixels)) {
             synth_tile(req.tx, req.ty, req.zoom, slot->pixels);
         }
         slot->state = SLOT_READY;

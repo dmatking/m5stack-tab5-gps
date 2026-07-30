@@ -218,7 +218,7 @@ static void map_task(void *arg)
 
         if (tile_cache_render_viewport(pan_x, pan_y, zoom)) {
             ui_overlay_draw_zoom_buttons();
-            ui_overlay_draw_gps_status();
+            ui_overlay_draw_gps_status(zoom);
             board_lcd_commit();
 
             if (last_redraw_us >= 0) {
