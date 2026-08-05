@@ -21,6 +21,7 @@
 #include "map_config.h"
 #include "map_tiles_data.h"
 #include "tile_cache.h"
+#include "tile_sd.h"
 #include "touch.h"
 #include "ui_overlay.h"
 
@@ -78,10 +79,12 @@ static void zoom_at_point(int32_t *pan_x, int32_t *pan_y, int32_t *zoom,
     *zoom = new_zoom;
 }
 
-// Pick the embedded zoom level to start on: MAP_ZOOM if it's actually
-// embedded, else whichever level main/map_tiles_data.h happens to list
-// first (still beats starting at world tile (0,0), which would make every
-// embedded grid unreachable without dragging millions of pixels).
+// Fallback starting point when no SD shards were found at all (see
+// tile_sd_pick_start(), preferred over this in map_task() below): MAP_ZOOM
+// if it's actually embedded in flash, else whichever level
+// main/map_tiles_data.h happens to list first (still beats starting at
+// world tile (0,0), which would make every embedded grid unreachable
+// without dragging millions of pixels).
 static const embedded_zoom_t *pick_starting_level(void)
 {
     for (int i = 0; i < MAP_EMBEDDED_ZOOM_COUNT; i++) {
@@ -97,13 +100,31 @@ static void map_task(void *arg)
     int32_t pan_x = 0, pan_y = 0;
     int32_t zoom = MAP_ZOOM;
 
-    const embedded_zoom_t *start = pick_starting_level();
-    if (start) {
-        int32_t grid_w = start->cols * MAP_TILE_SIZE;
-        int32_t grid_h = start->rows * MAP_TILE_SIZE;
-        pan_x = start->base_tx * MAP_TILE_SIZE + (grid_w - MAP_LOGICAL_W) / 2;
-        pan_y = start->base_ty * MAP_TILE_SIZE + (grid_h - MAP_LOGICAL_H) / 2;
-        zoom = start->zoom;
+    // Prefer a starting location actually backed by SD coverage -- flash
+    // metadata (map_tiles_data.h) only coincidentally overlapped the SD test
+    // shard so far because both were generated from the same home lat/lon;
+    // once the SD dataset covers a wholly different region (e.g. the
+    // Tarrant County set), starting from flash metadata would boot straight
+    // into checkerboard with no clue real data exists elsewhere on the card.
+    int32_t s_zoom, s_base_tx, s_base_ty, s_cols, s_rows;
+    bool have_start = tile_sd_pick_start(MAP_ZOOM, &s_zoom, &s_base_tx, &s_base_ty, &s_cols, &s_rows);
+    if (!have_start) {
+        const embedded_zoom_t *start = pick_starting_level();
+        if (start) {
+            s_zoom = start->zoom;
+            s_base_tx = start->base_tx;
+            s_base_ty = start->base_ty;
+            s_cols = start->cols;
+            s_rows = start->rows;
+            have_start = true;
+        }
+    }
+    if (have_start) {
+        int32_t grid_w = s_cols * MAP_TILE_SIZE;
+        int32_t grid_h = s_rows * MAP_TILE_SIZE;
+        pan_x = s_base_tx * MAP_TILE_SIZE + (grid_w - MAP_LOGICAL_W) / 2;
+        pan_y = s_base_ty * MAP_TILE_SIZE + (grid_h - MAP_LOGICAL_H) / 2;
+        zoom = s_zoom;
     }
 
     // Single-finger drag state.
@@ -216,7 +237,7 @@ static void map_task(void *arg)
 
         was_pressed = pressed;
 
-        if (tile_cache_render_viewport(pan_x, pan_y, zoom)) {
+        if (tile_cache_render_viewport(pan_x, pan_y, zoom, dragging)) {
             ui_overlay_draw_zoom_buttons();
             ui_overlay_draw_gps_status(zoom);
             board_lcd_commit();

@@ -74,6 +74,14 @@ import urllib.request
 from PIL import Image
 
 TILE = 256
+# Must match main/tile_jpeg.c's MAX_JPEG_TILE_BYTES exactly -- both
+# main/tile_flash.c and main/tile_sd.c reject any tile over this at read
+# time and silently fall back to the procedural placeholder, with no signal
+# in normal operation that a specific tile never made it onto the screen.
+# Enforced (not just warned about) below so an oversized tile is caught at
+# generation time instead of discovered later by comparing device logs.
+MAX_JPEG_TILE_BYTES = 48 * 1024
+MIN_JPEG_QUALITY = 40  # floor for the retry-at-lower-quality fallback in fetch_tile_jpeg()
 USER_AGENT = "m5stack-tab5-gps-dev/0.1 (personal hobby project, low-volume dev/test fetch)"
 CACHE_DIR = os.path.join(os.path.dirname(__file__), ".tile_png_cache")
 HEADER_OUT = os.path.join(os.path.dirname(__file__), "..", "main", "map_tiles_data.h")
@@ -129,7 +137,22 @@ def fetch_tile_jpeg(zoom, tx, ty, args):
         raise RuntimeError(f"unexpected tile size {img.size} for {zoom}/{tx}/{ty}")
     if args.rotate:
         img = img.rotate(args.rotate)
-    jpeg_bytes = to_jpeg_bytes(img, args.jpeg_quality)
+
+    quality = args.jpeg_quality
+    jpeg_bytes = to_jpeg_bytes(img, quality)
+    while len(jpeg_bytes) > MAX_JPEG_TILE_BYTES and quality > MIN_JPEG_QUALITY:
+        quality -= 10
+        jpeg_bytes = to_jpeg_bytes(img, quality)
+    if len(jpeg_bytes) > MAX_JPEG_TILE_BYTES:
+        raise RuntimeError(
+            f"tile {zoom}/{tx}/{ty} is {len(jpeg_bytes)} bytes even at quality={quality}, over "
+            f"MAX_JPEG_TILE_BYTES ({MAX_JPEG_TILE_BYTES}) in main/tile_jpeg.c -- on-device this "
+            f"tile would silently fall back to the procedural placeholder. Lower --jpeg-quality, "
+            f"or raise MAX_JPEG_TILE_BYTES in main/tile_jpeg.c and rebuild if you'd rather keep "
+            f"quality up.")
+    if quality != args.jpeg_quality:
+        print(f"  (tile {zoom}/{tx}/{ty}: dropped to quality={quality} to fit under the "
+              f"{MAX_JPEG_TILE_BYTES}-byte on-device cap)")
     return jpeg_bytes, from_cache
 
 
@@ -260,10 +283,9 @@ def run_sd_target(args, zoom_levels, bbox):
     avg_size = sum(all_sizes) / len(all_sizes)
     total_bytes = sum(os.path.getsize(p) for p in shard_paths)
     print(f"\nwrote {len(shard_paths)} shard file(s) to {args.out}/, {total_bytes} bytes total")
-    print(f"tile size: min={min(all_sizes)} avg={avg_size:.0f} max={max(all_sizes)} bytes")
-    if max(all_sizes) > 40 * 1024:
-        print("WARNING: max tile size is getting close to main/tile_jpeg.c's MAX_JPEG_TILE_BYTES (48KB) -- "
-              "recheck that constant against this dataset before flashing.")
+    print(f"tile size: min={min(all_sizes)} avg={avg_size:.0f} max={max(all_sizes)} bytes "
+          f"(all guaranteed <= {MAX_JPEG_TILE_BYTES}-byte on-device cap -- fetch_tile_jpeg() "
+          f"already enforced it per-tile, retrying at lower quality or aborting otherwise)")
     print(f"Copy every file in {args.out}/ onto the SD card's root (tools/sdmount.sh on the Pi, "
           f"then tools/eject.sh when done) -- no firmware rebuild/reflash needed.")
 

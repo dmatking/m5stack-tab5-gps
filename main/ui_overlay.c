@@ -148,7 +148,8 @@ bool ui_overlay_hit_test_zoom(int16_t x, int16_t y, int *delta)
 
 #define STATUS_CHAR_W  12
 #define STATUS_CHAR_H  24
-#define STATUS_BAR_H   32
+// Bar height itself (MAP_STATUS_BAR_H) now lives in map_config.h -- shared
+// with tile_cache.c, which clips tile compositing to exclude this strip.
 #define STATUS_MARGIN_X 8
 #define STATUS_BG_RGB565   0x2104  // near-black, matches MAP_BUTTON_BG_RGB565
 #define STATUS_FG_RGB565   0xFFFF  // white
@@ -204,7 +205,7 @@ void ui_overlay_draw_gps_status(int32_t zoom)
     // Always repaint the full-width background first -- the string's
     // content (and thus visible length) changes as fields fill in, so a
     // stale glyph from a previous, longer string could otherwise linger.
-    fill_logical_rect(fb, nat_w, nat_h, 0, 0, MAP_LOGICAL_W, STATUS_BAR_H, STATUS_BG_RGB565);
+    fill_logical_rect(fb, nat_w, nat_h, 0, 0, MAP_LOGICAL_W, MAP_STATUS_BAR_H, STATUS_BG_RGB565);
 
     bool fix = gps_has_fix();
     gps_state_t st = gps_get_state();
@@ -217,13 +218,13 @@ void ui_overlay_draw_gps_status(int32_t zoom)
         snprintf(line, sizeof(line), "Z%-2ld  NO FIX  SATS:%2d", (long)zoom, st.sats_in_use);
     }
 
-    int ty = (STATUS_BAR_H - STATUS_CHAR_H) / 2;
+    int ty = (MAP_STATUS_BAR_H - STATUS_CHAR_H) / 2;
     draw_string_logical(fb, nat_w, nat_h, STATUS_MARGIN_X, ty, line, fix ? STATUS_FIX_RGB565 : STATUS_FG_RGB565);
 
     // Fixed position at the right edge, independent of the text's variable
     // length -- always visible regardless of fix state.
     int icon_x = MAP_LOGICAL_W - STATUS_MARGIN_X - STATUS_SD_ICON_SIZE;
-    int icon_y = (STATUS_BAR_H - STATUS_SD_ICON_SIZE) / 2;
+    int icon_y = (MAP_STATUS_BAR_H - STATUS_SD_ICON_SIZE) / 2;
     fill_logical_rect(fb, nat_w, nat_h, icon_x, icon_y, STATUS_SD_ICON_SIZE, STATUS_SD_ICON_SIZE,
                        gps_log_active() ? STATUS_SD_OK_RGB565 : STATUS_SD_BAD_RGB565);
 }

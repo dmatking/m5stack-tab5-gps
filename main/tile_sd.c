@@ -92,6 +92,19 @@ void tile_sd_init(void)
                    &zoom, &base_tx, &base_ty, &cols, &rows) != 5) {
             continue; // not a shard file -- tiles.bin, gps_log.txt, etc.
         }
+        // Guard against a malformed/hand-edited/corrupted filename before it
+        // ever reaches the index-table math in ensure_shard_open()/
+        // tile_sd_read(): those compute cols*rows and row*cols+col in 32-bit
+        // arithmetic, which silently wraps (UB, since these are signed) on
+        // garbage-sized dimensions instead of failing loudly. Bounding the
+        // product to INT32_MAX guarantees every valid row*cols+col index
+        // derived from it also fits in 32 bits.
+        if (zoom < 0 || cols <= 0 || rows <= 0 ||
+            (int64_t)cols * (int64_t)rows > INT32_MAX) {
+            ESP_LOGW(TAG, "skipping shard with invalid dimensions in filename: %s "
+                          "(zoom=%d cols=%d rows=%d)", ent->d_name, zoom, cols, rows);
+            continue;
+        }
         if (s_shard_count == capacity) {
             capacity *= 2;
             sd_shard_meta_t *grown = realloc(s_shards, (size_t)capacity * sizeof(sd_shard_meta_t));
@@ -207,4 +220,22 @@ bool tile_sd_read(int32_t tile_x, int32_t tile_y, int32_t zoom, uint16_t *dst)
              (long)tile_x, (long)tile_y, (long)zoom, m->filename,
              (unsigned)entry.offset, (unsigned)entry.length, ok ? "OK" : "FAILED");
     return ok;
+}
+
+bool tile_sd_pick_start(int32_t want_zoom, int32_t *out_zoom, int32_t *out_base_tx,
+                         int32_t *out_base_ty, int32_t *out_cols, int32_t *out_rows)
+{
+    if (s_shard_count == 0) return false;
+
+    const sd_shard_meta_t *pick = &s_shards[0]; // fallback: first shard discovered
+    for (int i = 0; i < s_shard_count; i++) {
+        if (s_shards[i].zoom == want_zoom) { pick = &s_shards[i]; break; }
+    }
+
+    *out_zoom = pick->zoom;
+    *out_base_tx = pick->base_tx;
+    *out_base_ty = pick->base_ty;
+    *out_cols = pick->cols;
+    *out_rows = pick->rows;
+    return true;
 }

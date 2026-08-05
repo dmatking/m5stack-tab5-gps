@@ -59,3 +59,14 @@
 
 // Placeholder fill color (RGB565) for tiles not yet generated/loaded.
 #define MAP_PLACEHOLDER_RGB565  0x8410  // mid gray
+
+// Height (logical rows, top of screen) of the GPS status bar drawn by
+// main/ui_overlay.c. Shared with main/tile_cache.c, which clips tile
+// compositing to never write into this strip at all -- previously tiles and
+// the status bar both drew into the same rows every frame (tiles first,
+// overlay on top), and with double-buffering and no VSYNC-gated buffer
+// reuse, the DSI scan-out could occasionally read a buffer mid-composite,
+// after tiles were written but before the overlay redrew on top, flashing
+// raw tile pixels into the status bar for one frame. Excluding the strip
+// from tile compositing entirely removes that window regardless of timing.
+#define MAP_STATUS_BAR_H  32

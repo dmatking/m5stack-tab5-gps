@@ -31,7 +31,20 @@ static const char *TAG = "TILE_CACHE";
 typedef enum { SLOT_EMPTY, SLOT_GENERATING, SLOT_READY } slot_state_t;
 
 typedef struct {
-    slot_state_t state;
+    // _Atomic (not plain slot_state_t): generator_task() (core 1) writes
+    // slot->pixels and then this field to publish a finished tile;
+    // tile_cache_render_viewport() (core 0) reads this field to decide
+    // whether it's safe to read slot->pixels. Plain reads/writes here would
+    // be a real cross-core data race -- the atomic_fetch_add on s_ready_epoch
+    // a few lines after the plain write in generator_task() does NOT cover
+    // this, since a preemption between "state = SLOT_READY" and that
+    // fetch_add would let the render task observe the new state via its own
+    // plain read with no memory barrier having executed yet, risking a read
+    // of stale/partially-written pixel data. Declaring the field _Atomic and
+    // keeping ordinary assignment/comparison syntax elsewhere in this file
+    // (C11 defaults those to memory_order_seq_cst, a full barrier) closes
+    // that window with no other code changes needed.
+    _Atomic slot_state_t state;
     int32_t tx, ty, zoom;
     uint32_t last_used;
     uint16_t *pixels; // MAP_TILE_SIZE x MAP_TILE_SIZE, RGB565
@@ -45,7 +58,12 @@ static uint32_t s_frame_counter = 0;
 // needed" and skip the whole composite+flip when idle instead of
 // re-blitting an unchanged screen every tick.
 static _Atomic uint32_t s_ready_epoch = 0;
-static int32_t s_last_pan_x = INT32_MIN, s_last_pan_y = INT32_MIN, s_last_zoom = INT32_MIN;
+
+// Also read by generator_task() (core 1) via is_request_still_relevant() to
+// decide whether a queued request is stale -- _Atomic here purely for that
+// cross-core read, not because the render thread's own same-core dirty-check
+// use needed it.
+static _Atomic int32_t s_last_pan_x = INT32_MIN, s_last_pan_y = INT32_MIN, s_last_zoom = INT32_MIN;
 static uint32_t s_last_rendered_epoch = UINT32_MAX;
 
 typedef struct { int32_t tx, ty, zoom; } tile_req_t;
@@ -103,6 +121,16 @@ static tile_slot_t *alloc_slot(int32_t tx, int32_t ty, int32_t zoom)
     }
     if (!victim) return NULL; // every slot is currently GENERATING -- try again next frame
 
+    // TEMP diagnostic -- flicker investigation. Evicting a READY slot means
+    // giving up an already-displayable tile to make room for a new one; if
+    // this fires repeatedly for the same handful of (tx,ty,zoom) identities
+    // during ordinary panning (cache nowhere near full), that's thrashing.
+    if (victim->state == SLOT_READY) {
+        ESP_LOGI(TAG, "evict %ld,%ld z%ld (last_used=%lu) -> %ld,%ld z%ld (now=%lu)",
+                 (long)victim->tx, (long)victim->ty, (long)victim->zoom, (unsigned long)victim->last_used,
+                 (long)tx, (long)ty, (long)zoom, (unsigned long)s_frame_counter);
+    }
+
     // Fill in the new identity before flipping state: the generator task only
     // reads tx/ty/zoom for a request after it dequeues the matching one, and
     // the queue send/receive pair below provides the happens-before guarantee.
@@ -130,6 +158,48 @@ static void request_tile(int32_t tx, int32_t ty, int32_t zoom)
     }
 }
 
+// True if (tx,ty,zoom) still falls within the viewport (or the adjacent-zoom
+// prefetch ring) implied by the most recently *rendered* pan/zoom -- i.e.
+// would tile_cache_render_viewport()/request_adjacent_zoom() still ask for
+// this tile if run again right now. Re-derives the same bounds those two
+// use, read from the atomic viewport-state globals they publish. Used by
+// generator_task() to skip a queued request that's gone stale (user panned/
+// zoomed away since it was enqueued) instead of spending a full SD
+// read+decode on a tile nobody will see -- see tile_cache.h's
+// tile_cache_render_viewport() doc comment for the starvation failure mode
+// this closes.
+static bool is_request_still_relevant(int32_t tx, int32_t ty, int32_t zoom)
+{
+    int32_t cur_zoom = s_last_zoom;
+    if (cur_zoom == INT32_MIN) return true; // nothing rendered yet -- don't skip
+
+    int32_t delta = zoom - cur_zoom;
+    if (delta < -1 || delta > 1) return false; // not the current or an adjacent zoom anymore
+
+    int32_t pan_x = s_last_pan_x;
+    int32_t pan_y = s_last_pan_y;
+    int32_t margin = MAP_PREFETCH_MARGIN;
+
+    if (delta != 0) {
+        // Same world-point-under-screen-center shift request_adjacent_zoom()
+        // uses to turn the current pan into a hypothetical pan at zoom+delta.
+        int32_t focal_x = MAP_LOGICAL_W / 2, focal_y = MAP_LOGICAL_H / 2;
+        int64_t world_x = (int64_t)pan_x + focal_x;
+        int64_t world_y = (int64_t)pan_y + focal_y;
+        if (delta > 0) { world_x <<= delta; world_y <<= delta; }
+        else           { world_x >>= -delta; world_y >>= -delta; }
+        pan_x = (int32_t)(world_x - focal_x);
+        pan_y = (int32_t)(world_y - focal_y);
+        margin = 0; // request_adjacent_zoom() uses no margin, exact viewport only
+    }
+
+    int32_t tx0 = floor_div(pan_x, MAP_TILE_SIZE) - margin;
+    int32_t ty0 = floor_div(pan_y, MAP_TILE_SIZE) - margin;
+    int32_t tx1 = floor_div(pan_x + MAP_LOGICAL_W - 1, MAP_TILE_SIZE) + margin;
+    int32_t ty1 = floor_div(pan_y + MAP_LOGICAL_H - 1, MAP_TILE_SIZE) + margin;
+    return tx >= tx0 && tx <= tx1 && ty >= ty0 && ty <= ty1;
+}
+
 static void generator_task(void *arg)
 {
     (void)arg;
@@ -139,6 +209,16 @@ static void generator_task(void *arg)
 
         tile_slot_t *slot = find_slot(req.tx, req.ty, req.zoom);
         if (!slot || slot->state != SLOT_GENERATING) continue; // stale/evicted
+
+        if (!is_request_still_relevant(req.tx, req.ty, req.zoom)) {
+            // Free the slot without doing the expensive part -- see the
+            // comment on is_request_still_relevant() and tile_cache.h's
+            // tile_cache_render_viewport() doc comment. No PSRAM write
+            // happened, so skip the pacing delay below too; go straight to
+            // the next queued item.
+            slot->state = SLOT_EMPTY;
+            continue;
+        }
 
         // SD-only for now (flash embedding deliberately disabled -- see
         // main.c) while verifying the SD read/decode path in isolation.
@@ -314,7 +394,7 @@ void tile_cache_mark_dirty(void)
     atomic_fetch_add(&s_ready_epoch, 1);
 }
 
-bool tile_cache_render_viewport(int32_t pan_x, int32_t pan_y, int32_t zoom)
+bool tile_cache_render_viewport(int32_t pan_x, int32_t pan_y, int32_t zoom, bool dragging)
 {
     uint32_t epoch = atomic_load(&s_ready_epoch);
     if (pan_x == s_last_pan_x && pan_y == s_last_pan_y && zoom == s_last_zoom &&
@@ -345,9 +425,18 @@ bool tile_cache_render_viewport(int32_t pan_x, int32_t pan_y, int32_t zoom)
 
     // Prefetch the adjacent zoom levels, enqueued after the current zoom's
     // requests so the generator task (FIFO) always prioritizes what's
-    // actually on screen right now.
-    request_adjacent_zoom(pan_x, pan_y, zoom, -1);
-    request_adjacent_zoom(pan_x, pan_y, zoom, +1);
+    // actually on screen right now. Suspended while actively dragging --
+    // sustained panning can otherwise inject new distinct tile requests
+    // faster than the generator drains them, and with three zoom levels'
+    // worth of requests competing for MAP_CACHE_SLOTS, the backlog can fill
+    // entirely with stale work and starve the visible viewport of slots
+    // (see is_request_still_relevant() for the other half of this fix).
+    // Resumes automatically the instant dragging stops (next call with
+    // dragging=false), same cadence as before.
+    if (!dragging) {
+        request_adjacent_zoom(pan_x, pan_y, zoom, -1);
+        request_adjacent_zoom(pan_x, pan_y, zoom, +1);
+    }
 
     // Composite exactly the tiles intersecting the visible screen. All PPA ops
     // for this frame are submitted non-blocking back-to-back so the hardware
@@ -359,13 +448,24 @@ bool tile_cache_render_viewport(int32_t pan_x, int32_t pan_y, int32_t zoom)
     int32_t vty1 = floor_div(pan_y + fb_h - 1, MAP_TILE_SIZE);
     int pending = 0;
 
+    // Top edge of the tile-compositing area is pushed down past the GPS
+    // status bar's rows -- ui_overlay.c owns that strip exclusively now.
+    // Previously tiles and the status bar both drew into the same rows
+    // every frame (tiles first, overlay on top); with double-buffering and
+    // no VSYNC-gated buffer reuse, the DSI scan-out could occasionally read
+    // a buffer mid-composite (after tiles were written, before the overlay
+    // redrew on top), flashing raw tile pixels into the status bar for one
+    // frame. Never writing tiles there at all removes that window
+    // regardless of timing. See MAP_STATUS_BAR_H's comment in map_config.h.
+    int32_t screen_top = pan_y + MAP_STATUS_BAR_H;
+
     for (int32_t ty = vty0; ty <= vty1; ty++) {
         for (int32_t tx = vtx0; tx <= vtx1; tx++) {
             int32_t tile_world_x = tx * MAP_TILE_SIZE;
             int32_t tile_world_y = ty * MAP_TILE_SIZE;
 
             int32_t ix0 = tile_world_x > pan_x ? tile_world_x : pan_x;
-            int32_t iy0 = tile_world_y > pan_y ? tile_world_y : pan_y;
+            int32_t iy0 = tile_world_y > screen_top ? tile_world_y : screen_top;
             int32_t tile_x1 = tile_world_x + MAP_TILE_SIZE;
             int32_t tile_y1 = tile_world_y + MAP_TILE_SIZE;
             int32_t screen_x1 = pan_x + fb_w;

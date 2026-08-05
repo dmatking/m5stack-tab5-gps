@@ -18,3 +18,15 @@ void tile_sd_init(void);
 // outside every known shard, or on a read/decode error -- callers should
 // fall back to synth_tile() in that case.
 bool tile_sd_read(int32_t tile_x, int32_t tile_y, int32_t zoom, uint16_t *dst);
+
+// Suggests a starting (zoom, base_tx, base_ty, cols, rows) to center the map
+// on at boot, derived from whatever SD shards were actually discovered --
+// prefers a shard at want_zoom, else falls back to the first shard found.
+// Returns false (outputs untouched) if no SD shards exist at all, in which
+// case the caller should fall back to the compiled-in flash metadata
+// (map_tiles_data.h) instead. Without this, a boot-time starting position
+// derived only from flash metadata can silently point at an area with no SD
+// coverage at all once the flash and SD datasets cover different regions --
+// upfront math instead of stale-flash-metadata coincidence.
+bool tile_sd_pick_start(int32_t want_zoom, int32_t *out_zoom, int32_t *out_base_tx,
+                         int32_t *out_base_ty, int32_t *out_cols, int32_t *out_rows);

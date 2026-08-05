@@ -15,12 +15,16 @@ void tile_cache_init(void);
 // are filled with a placeholder color instead of blocking. Also requests
 // generation of any visible-or-nearby tiles that aren't cached yet.
 //
-// Returns false (and does nothing) if neither the viewport nor the zoom has
-// moved and no tile finished loading since the last call -- there's nothing
-// new to show, so skip the redraw entirely rather than re-blitting an
-// unchanged screen. When it returns true, the caller should call
-// board_lcd_commit() to flip.
-bool tile_cache_render_viewport(int32_t pan_x, int32_t pan_y, int32_t zoom);
+// dragging: true while a drag gesture is in progress -- suspends the
+// adjacent-zoom (+-1) prefetch (current-zoom viewport requests still happen
+// normally). Sustained panning can otherwise inject new distinct tile
+// requests faster than the generator (rate-limited, and slower per-tile
+// than the old flash reads) can drain them; with three zoom levels' worth
+// of requests competing for a fixed-size slot pool, that backlog can fill
+// entirely with stale (no-longer-visible) work and starve the tiles
+// actually on screen of a slot to generate into at all -- see
+// generator_task()'s stale-request skip for the other half of this fix.
+bool tile_cache_render_viewport(int32_t pan_x, int32_t pan_y, int32_t zoom, bool dragging);
 
 // Force the next tile_cache_render_viewport() call to redraw even if pan/
 // zoom haven't moved and no tile just finished loading -- for overlays

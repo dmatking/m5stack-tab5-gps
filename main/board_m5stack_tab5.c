@@ -22,6 +22,7 @@
 #include "esp_ldo_regulator.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 
 static const char *TAG = "BOARD_TAB5";
@@ -73,6 +74,28 @@ static esp_lcd_panel_io_handle_t s_panel_io  = NULL;
 static uint8_t                  *s_fbs[2]    = {0};  // hardware double-buffers (DPI)
 static int                       s_back_idx  = 0;    // index of the back (render) buffer
 static uint8_t                  *s_backbuf   = NULL; // software render buffer (PSRAM)
+
+// Given from the DPI driver's on_refresh_done callback each time a committed
+// buffer finishes actually being scanned out over DSI -- see board_lcd_commit().
+static SemaphoreHandle_t s_refresh_done_sem = NULL;
+
+// Fires once per completed DSI scan-out of whatever buffer is currently
+// being displayed -- the panel refreshes continuously at its own fixed rate
+// regardless of whether a new buffer was just committed, so this can fire
+// even when nothing changed. board_lcd_commit() waits on the resulting
+// semaphore before returning, which is what actually matters: it guarantees
+// the render loop never starts compositing into a buffer the hardware is
+// still actively scanning (see board_lcd_commit()'s comment for the failure
+// mode this closes -- a real, reproduced-on-hardware localized stutter in
+// whichever screen region happened to be written earliest in the composite
+// pass and land latest in DSI scan order).
+static bool dpi_refresh_done_cb(esp_lcd_panel_handle_t panel, esp_lcd_dpi_panel_event_data_t *edata, void *user_ctx)
+{
+    (void)panel; (void)edata; (void)user_ctx;
+    BaseType_t hp_task_woken = pdFALSE;
+    xSemaphoreGiveFromISR(s_refresh_done_sem, &hp_task_woken);
+    return hp_task_woken == pdTRUE;
+}
 
 static i2c_master_bus_handle_t s_i2c_bus     = NULL;  // shared I2C bus 0 (IO expanders + touch)
 static i2c_master_dev_handle_t s_pi4ioe2_dev = NULL;  // kept around for board_set_usb5v_en()
@@ -334,6 +357,12 @@ void board_init(void)
     ESP_ERROR_CHECK(esp_lcd_dpi_panel_enable_dma2d(s_panel));
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel, true));
 
+    // 7b. Refresh-done notification -- see dpi_refresh_done_cb()/board_lcd_commit().
+    s_refresh_done_sem = xSemaphoreCreateBinary();
+    assert(s_refresh_done_sem);
+    esp_lcd_dpi_panel_event_callbacks_t refresh_cbs = { .on_refresh_done = dpi_refresh_done_cb };
+    ESP_ERROR_CHECK(esp_lcd_dpi_panel_register_event_callbacks(s_panel, &refresh_cbs, NULL));
+
     // 8. Get both hardware framebuffers and allocate software render buffer
     void *fb0 = NULL, *fb1 = NULL;
     ESP_ERROR_CHECK(esp_lcd_dpi_panel_get_frame_buffer(s_panel, 2, &fb0, &fb1));
@@ -429,6 +458,21 @@ void board_lcd_commit(void)
     if (!back || !s_panel) return;
     esp_lcd_panel_draw_bitmap(s_panel, 0, 0, LCD_W, LCD_H, back);
     s_back_idx ^= 1;
+
+    // Block until this buffer has actually finished being scanned out before
+    // letting the caller start compositing into the other one. Without this,
+    // a render loop fast enough could occasionally race ahead of the panel's
+    // true refresh rate (~57.8Hz, vs. the softer MAP_RENDER_FPS=60 target)
+    // and start overwriting a buffer the DSI hardware was still actively
+    // reading -- reproduced on real hardware as a localized stutter/flicker
+    // in whichever screen region happened to be written earliest in the
+    // composite pass and land latest in DSI scan order (the map's logical
+    // top-left tiles, immediately next to the GPS status bar). This
+    // naturally paces the whole render loop to the panel's real rate instead
+    // of the softer target.
+    if (s_refresh_done_sem) {
+        xSemaphoreTake(s_refresh_done_sem, portMAX_DELAY);
+    }
 }
 
 esp_lcd_panel_handle_t    board_lcd_panel_handle(void)    { return s_panel; }
