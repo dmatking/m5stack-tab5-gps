@@ -3,11 +3,10 @@
 //
 // On-screen zoom +/- buttons: no font rendering needed, a "+"/"-" glyph is
 // just one or two thin filled rects. Drawn straight into the native hw
-// framebuffer via the same logical->native placement transform tile_cache.c
-// uses for tiles (the physical panel is portrait but the map renders in a
-// logical landscape space, pre-rotated 90deg CCW -- see map_config.h).
-// Owns its own small PPA fill client, blocking mode -- only a handful of
-// tiny fills per frame, not worth pipelining.
+// framebuffer -- logical space is the same orientation as the native panel
+// (see map_config.h), so no placement transform is needed. Owns its own
+// small PPA fill client, blocking mode -- only a handful of tiny fills per
+// frame, not worth pipelining.
 
 #include "ui_overlay.h"
 #include "board_interface.h"
@@ -37,16 +36,17 @@ void ui_overlay_init(void)
              ZOOM_IN_X, ZOOM_IN_Y, ZOOM_OUT_X, ZOOM_OUT_Y, MAP_BUTTON_SIZE);
 }
 
-// Same logical(landscape)->native(portrait) placement transform tile_cache.c
-// uses for tiles: a 90deg CCW rotation, verified against PIL's rotate(90)
-// pixel mapping (rx=oy, ry=(W-1)-ox) applied to a rect instead of a point.
+// Identity now that logical space matches the native panel's own
+// orientation (see map_config.h) -- kept as a named function rather than
+// inlined at each call site so callers read the same either way, and so a
+// future orientation change has one place to change.
 static void logical_rect_to_native(int lx, int ly, int lw, int lh,
                                     int *nx, int *ny, int *nw, int *nh)
 {
-    *nx = ly;
-    *ny = MAP_LOGICAL_W - lx - lw;
-    *nw = lh;
-    *nh = lw;
+    *nx = lx;
+    *ny = ly;
+    *nw = lw;
+    *nh = lh;
 }
 
 // PPA's *fill* operation expects fill_color_val byte-packed as 0x00RRGGBB,
@@ -139,8 +139,8 @@ bool ui_overlay_hit_test_zoom(int16_t x, int16_t y, int *delta)
 // ---------------------------------------------------------------------------
 // GPS status bar -- reuses the Terminus 24 font (main/font_terminus24.h,
 // copied from m5stack-tab5-ssh-terminal) and the same logical->native
-// rotation transform as the rest of this file, applied per-pixel instead of
-// per-rect since glyphs are bitmap patterns, not solid fills. Raw RGB565
+// placement as the rest of this file (identity), applied per-pixel instead
+// of per-rect since glyphs are bitmap patterns, not solid fills. Raw RGB565
 // values written directly into the hw framebuffer, same convention as
 // MAP_BUTTON_BG_RGB565 elsewhere in this file (confirmed via
 // board_m5stack_tab5.c: no byte-swap happens on this board's raw pixel path).

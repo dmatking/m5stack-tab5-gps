@@ -37,14 +37,15 @@
 
 static const char *TAG = "MAP_VIEW";
 
-// Remap raw (native portrait panel) touch coordinates to logical (landscape)
-// space. Exact inverse of tile_cache.c's placement transform
-// (native_x=logical_y, native_y=LOGICAL_W-logical_x-w), for the same
-// PIL-rotate(90)-verified 90 deg CCW rotation.
+// Remap raw touch coordinates to logical space -- identity, since logical
+// space is the same orientation as the native portrait panel (see
+// map_config.h). Kept as a named function so touch handling reads the same
+// regardless of orientation, and so a future orientation change has one
+// place to change (matching tile_cache.c/ui_overlay.c's placement).
 static inline void to_logical(int16_t raw_x, int16_t raw_y, int16_t *lx, int16_t *ly)
 {
-    *lx = (int16_t)(MAP_LOGICAL_W - 1 - raw_y);
-    *ly = raw_x;
+    *lx = raw_x;
+    *ly = raw_y;
 }
 
 static inline int16_t touch_dist(int16_t ax, int16_t ay, int16_t bx, int16_t by)

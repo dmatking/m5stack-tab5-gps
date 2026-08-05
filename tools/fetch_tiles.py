@@ -34,9 +34,12 @@
 # Both work with either target.
 #
 # --rotate applies a 90deg-multiple rotation to each tile's pixel content
-# before encoding, to match a landscape-oriented render on a physically
-# portrait panel (see main/tile_cache.c's placement transform, which must
-# use the matching rotation). Positive = counter-clockwise (PIL convention).
+# before encoding. Default 0 -- the app is portrait-native (main/map_config.h)
+# and needs no placement-side rotation, so tiles should be fetched
+# unrotated to match. Only pass --rotate if main/map_config.h's
+# MAP_LOGICAL_W/H are ever switched back to landscape (1280x720) -- if so,
+# it must match whatever placement transform tile_cache.c uses again.
+# Positive = counter-clockwise (PIL convention).
 #
 # Downloaded PNGs are cached locally (.tile_png_cache/) so re-running with a
 # different --rotate/--jpeg-quality/grid/target doesn't re-hit the tile
@@ -50,9 +53,9 @@
 # their server than one small grid.
 #
 # Usage:
-#   python tools/fetch_tiles.py 32.8896614814945 -97.34129452988256 --zoom 16 --rotate 90
-#   python tools/fetch_tiles.py <lat> <lon> --zoom 10,12,14,16,17,18,19 --cols 6 --rows 8 --rotate 90
-#   python tools/fetch_tiles.py --target sd --bbox 33.45,-98.15,32.15,-96.55 --zoom 10,12,14,16 --rotate 90
+#   python tools/fetch_tiles.py 32.8896614814945 -97.34129452988256 --zoom 16
+#   python tools/fetch_tiles.py <lat> <lon> --zoom 10,12,14,16,17,18,19 --cols 6 --rows 8
+#   python tools/fetch_tiles.py --target sd --bbox 33.45,-98.15,32.15,-96.55 --zoom 10,12,14,16
 #
 # After a flash-target run, flash tiles.bin to the "tiledata" partition (see
 # ../partitions.csv), e.g.:

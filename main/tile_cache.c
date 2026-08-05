@@ -408,8 +408,8 @@ bool tile_cache_render_viewport(int32_t pan_x, int32_t pan_y, int32_t zoom, bool
     if (!fb) return false;
     int nat_w = board_lcd_width();   // physical panel, portrait: 720
     int nat_h = board_lcd_height();  // physical panel, portrait: 1280
-    int fb_w = MAP_LOGICAL_W;        // viewport/clipping math happens in logical
-    int fb_h = MAP_LOGICAL_H;        // (landscape) space: 1280x720
+    int fb_w = MAP_LOGICAL_W;        // logical space == native portrait space now
+    int fb_h = MAP_LOGICAL_H;        // (720x1280) -- see map_config.h
 
     // Request generation for the visible range plus a prefetch margin ring.
     int32_t rtx0 = floor_div(pan_x, MAP_TILE_SIZE) - MAP_PREFETCH_MARGIN;
@@ -481,30 +481,26 @@ bool tile_cache_render_viewport(int32_t pan_x, int32_t pan_y, int32_t zoom, bool
             int w = (int)(ix1 - ix0);
             int h = (int)(iy1 - iy0);
 
-            // Tile pixel content is pre-rotated 90 deg CCW offline (see
-            // tools/fetch_tiles.py --rotate 90) to match landscape-on-portrait
-            // placement. Both the source sub-rect (within the pre-rotated
-            // tile) and the destination sub-rect (in the native portrait
-            // framebuffer) need the same CCW remap, which turns into a plain
-            // unrotated block copy between two already-transformed rects.
-            // PIL rotate(90) maps original (ox,oy) -> rotated (rx=oy, ry=(W-1)-ox),
-            // verified empirically; applied here to a rect, not a bare point.
-            int rot_src_x = src_y;
-            int rot_src_y = MAP_TILE_SIZE - src_x - w;
-            int rot_w = h;
-            int rot_h = w;
-            int native_dst_x = dst_y;
-            int native_dst_y = MAP_LOGICAL_W - dst_x - w;
-
+            // Portrait-native app now (see MAP_LOGICAL_W/H in map_config.h) --
+            // logical space *is* the native framebuffer's own orientation, so
+            // placement is a plain, unrotated block copy: src rect straight
+            // out of the tile buffer, dst rect at the same coordinates in the
+            // native framebuffer. No coordinate transform of any kind. (This
+            // used to carry a CCW remap here to support holding the device
+            // sideways against a portrait panel; that placement-side rotation
+            // was the actual source of a real, reproduced-on-hardware tile
+            // flicker, and turned out to be unnecessary in the first place --
+            // see the git log for main/map_config.h around the MAP_LOGICAL_W/H
+            // change for the full investigation.)
             tile_slot_t *slot = find_slot(tx, ty, zoom);
             bool queued;
             if (slot && slot->state == SLOT_READY) {
                 slot->last_used = s_frame_counter;
-                queued = ppa_blit_tile(slot->pixels, rot_src_x, rot_src_y, rot_w, rot_h,
-                                        fb, nat_w, nat_h, native_dst_x, native_dst_y);
+                queued = ppa_blit_tile(slot->pixels, src_x, src_y, w, h,
+                                        fb, nat_w, nat_h, dst_x, dst_y);
             } else {
-                queued = ppa_fill_rect(fb, nat_w, nat_h, native_dst_x, native_dst_y,
-                                        rot_w, rot_h, MAP_PLACEHOLDER_RGB565);
+                queued = ppa_fill_rect(fb, nat_w, nat_h, dst_x, dst_y,
+                                        w, h, MAP_PLACEHOLDER_RGB565);
             }
             if (queued) pending++;
         }
