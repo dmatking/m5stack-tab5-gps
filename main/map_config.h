@@ -71,6 +71,12 @@
 // Placeholder fill color (RGB565) for tiles not yet generated/loaded.
 #define MAP_PLACEHOLDER_RGB565  0x8410  // mid gray
 
+// Idle time (touch-only -- GPS/background activity doesn't count) before
+// the backlight turns off to save power. The first tap after that just
+// wakes the screen back up; it's consumed (no pan/zoom/tap side effect),
+// same convention as a zoom-button touch. 0 disables the timeout.
+#define MAP_SCREEN_TIMEOUT_US  30000000  // 30s
+
 // Height (logical rows, top of screen) of the GPS status bar drawn by
 // main/ui_overlay.c. Shared with main/tile_cache.c, which clips tile
 // compositing to never write into this strip at all -- previously tiles and

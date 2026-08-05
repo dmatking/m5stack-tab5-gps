@@ -158,8 +158,45 @@ static void map_task(void *arg)
     memset(&last_gps_state, 0, sizeof(last_gps_state));
     bool last_log_active = false;
 
+    // Screen-off timeout (see MAP_SCREEN_TIMEOUT_US) -- touch activity only,
+    // deliberately not GPS/background updates, or the screen would never
+    // time out on its own while GPS keeps streaming fixes.
+    bool screen_on = true;
+    int64_t last_activity_us = esp_timer_get_time();
+
     while (1) {
         ticks_since_log++;
+
+        touch_point_t raw_pt;
+        bool pressed = touch_poll_multi(&raw_pt, 1) >= 1;
+        int64_t now = esp_timer_get_time();
+
+        if (!screen_on) {
+            // Screen is off -- still poll touch (above) so a tap can wake
+            // it, but skip GPS-dirty-check/render/PPA/SD work entirely:
+            // nothing is visible, no reason to spend the power on it.
+            if (pressed && !was_pressed) {
+                board_lcd_set_backlight(true);
+                screen_on = true;
+                last_activity_us = now;
+                // Consume this touch same as a zoom-button press would --
+                // it just woke the screen, it shouldn't also pan/zoom/tap.
+                touch_is_button = true;
+                tile_cache_mark_dirty(); // force a real redraw next loop
+            }
+            was_pressed = pressed;
+            vTaskDelayUntil(&next_wake, period);
+            continue;
+        }
+
+        if (pressed) last_activity_us = now;
+        if (MAP_SCREEN_TIMEOUT_US > 0 && now - last_activity_us > MAP_SCREEN_TIMEOUT_US) {
+            board_lcd_set_backlight(false);
+            screen_on = false;
+            was_pressed = pressed;
+            vTaskDelayUntil(&next_wake, period);
+            continue;
+        }
 
         // The map's own dirty-check (tile_cache_render_viewport, below)
         // only knows about pan/zoom/tile-arrival -- it has no idea the
@@ -178,15 +215,10 @@ static void map_task(void *arg)
             tile_cache_mark_dirty();
         }
 
-        touch_point_t raw_pt;
-        bool pressed = touch_poll_multi(&raw_pt, 1) >= 1;
-
         int16_t lx = 0, ly = 0;
         if (pressed) {
             to_logical(raw_pt.x, raw_pt.y, &lx, &ly);
         }
-
-        int64_t now = esp_timer_get_time();
 
         if (pressed) {
             if (!was_pressed) {

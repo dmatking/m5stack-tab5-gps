@@ -386,6 +386,12 @@ void board_init(void)
     ESP_LOGI(TAG, "%s init done", BOARD_NAME);
 }
 
+void board_lcd_set_backlight(bool on)
+{
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, LCD_LEDC_CHAN, on ? LCD_LEDC_DUTY_MAX : 0);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, LCD_LEDC_CHAN);
+}
+
 const char *board_get_name(void) { return BOARD_NAME; }
 bool        board_has_lcd(void)  { return s_panel != NULL; }
 

@@ -7,6 +7,7 @@
 // Boards that have an LCD should override these with real implementations.
 __attribute__((weak)) void board_lcd_sanity_test(void) {}
 __attribute__((weak)) void board_lcd_fill(uint16_t color) { (void)color; }
+__attribute__((weak)) void board_lcd_set_backlight(bool on) { (void)on; }
 __attribute__((weak)) int board_lcd_width(void) { return 0; }
 __attribute__((weak)) int board_lcd_height(void) { return 0; }
 __attribute__((weak)) void board_lcd_flush(void) {}

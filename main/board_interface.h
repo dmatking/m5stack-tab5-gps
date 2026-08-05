@@ -20,6 +20,12 @@ void board_lcd_sanity_test(void);
 // Fill the LCD with a RGB565 color. No-op if no LCD.
 void board_lcd_fill(uint16_t color);
 
+// Turn the backlight on/off for a power-saving screen-off -- display content
+// and the panel's own scan-out are untouched, this only cuts the light
+// behind it (fast, no re-init needed to turn back on). No-op if the board
+// has no backlight control (default in board_defaults.c).
+void board_lcd_set_backlight(bool on);
+
 // ---------------------------------------------------------------------------
 // Display drawing API — framebuffer-based pixel access for graphics demos.
 // Boards with an LCD should implement these. Weak no-op defaults are provided
