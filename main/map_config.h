@@ -75,7 +75,7 @@
 // the backlight turns off to save power. The first tap after that just
 // wakes the screen back up; it's consumed (no pan/zoom/tap side effect),
 // same convention as a zoom-button touch. 0 disables the timeout.
-#define MAP_SCREEN_TIMEOUT_US  30000000  // 30s
+#define MAP_SCREEN_TIMEOUT_US  180000000  // 3min
 
 // Height (logical rows, top of screen) of the GPS status bar drawn by
 // main/ui_overlay.c. Shared with main/tile_cache.c, which clips tile
