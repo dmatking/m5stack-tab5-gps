@@ -15,12 +15,12 @@ void ui_overlay_init(void);
 void ui_overlay_draw_zoom_buttons(void);
 
 // Draw a GPS status bar (zoom level/fix/satellite count/lat/lon) across the
-// top of the logical (landscape) screen. Same call-site contract as
+// top of the logical (portrait) screen. Same call-site contract as
 // ui_overlay_draw_zoom_buttons(). Safe to call every redraw -- always
 // repaints its own background first so stale characters never linger.
 void ui_overlay_draw_gps_status(int32_t zoom);
 
-// Hit-test a touch point (logical/landscape coordinates, same space as the
+// Hit-test a touch point (logical/portrait coordinates, same space as the
 // map's pan math) against the zoom buttons. Returns true and sets *delta to
 // +1 (zoom in) or -1 (zoom out) if (x,y) falls inside a button.
 bool ui_overlay_hit_test_zoom(int16_t x, int16_t y, int *delta);

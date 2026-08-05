@@ -42,14 +42,25 @@
 #define MAP_CACHE_SLOTS      128
 #define MAP_PREFETCH_MARGIN  1   // extra ring of tiles loaded beyond the viewport
 
-// The physical panel is portrait (720x1280), but the Tab5's keyboard dock
-// makes landscape the natural hold -- so the map is composited in this
-// logical (landscape) space and placed into the native framebuffer via a
-// coordinate transform in tile_cache.c, matching a 90deg CCW pre-rotation
-// baked into the tile pixel data itself (tools/fetch_tiles.py --rotate 90).
-// No PPA rotation happens at runtime; only placement math changes.
-#define MAP_LOGICAL_W   1280
-#define MAP_LOGICAL_H   720
+// Portrait-native app: logical space is the same orientation as the
+// physical panel (720x1280), so placement in tile_cache.c/ui_overlay.c is a
+// plain, unrotated block copy -- no coordinate transform of any kind.
+//
+// This used to be 1280x720 (landscape), with the map composited sideways
+// and placed into the native framebuffer via a 90deg CCW coordinate
+// transform, matching a matching pre-rotation baked into the tile pixel
+// data itself (holding the Tab5's keyboard dock rotated was the intended
+// use). That placement-side rotation turned out to be the actual source of
+// a real, reproduced-on-hardware tile flicker during panning (position-
+// dependent, survived VSYNC-gating and cross-core-atomics fixes, gone
+// immediately when placement went identity) -- and unnecessary in the
+// first place, since the physical act of holding the device rotated plus
+// pre-rotating tile content offline is already a complete transform on its
+// own; adding a second, software placement-side rotation on top was
+// redundant. tools/fetch_tiles.py no longer pre-rotates tile content
+// (--rotate defaults to 0) to match.
+#define MAP_LOGICAL_W   720
+#define MAP_LOGICAL_H   1280
 
 // Render task target rate. This is really the touch-poll rate now -- the
 // dirty-check in tile_cache means idle ticks (no new touch coordinate) are
