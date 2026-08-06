@@ -142,14 +142,44 @@ def bundle_files_for_level(pkg_dir, level):
 
 def parse_bundle_name(path):
     """R<rrrr>C<cccc>.bundle -> (row, col) -- hex, absolute tile coords of
-    the bundle's top-left (lowest row/col) tile."""
+    the bundle's top-left (lowest row/col) tile.
+
+    NOT parsed by scanning for a literal 'C': hex digits can themselves
+    contain the letter 'c' (0xC=12), and confirmed on a real export
+    (level 13's actual bundle was R0c80C0700.bundle -- the row value
+    "0c80" contains a 'c', which a naive "find the first C" scan mistakes
+    for the row/col separator, silently producing a wrong split with no
+    error). Also confirmed real-world width varies by level (4 hex digits
+    at z13, 8 at z16 in this same package) -- a greedy-regex ("R(hex+)C
+    (hex+)") fix was considered and rejected: it's *also* silently wrong
+    whenever the column's own value happens to start with a 'C' digit,
+    since regex backtracking-from-longest will swallow that leading C into
+    the row group instead of treating it as part of the column.
+
+    Instead, rely on row and col always being padded to the SAME width as
+    each other within one filename -- true by construction, since the Web
+    Mercator tile grid is always square at any given level, so row and col
+    share the same possible value range and the same natural padding
+    width. The filename is "R" + <L hex digits> + "C" + <L hex digits> for
+    some L, so L is recoverable directly from the filename's total length,
+    with no character-scanning ambiguity at all.
+    """
     name = os.path.splitext(os.path.basename(path))[0]
-    upper = name.upper()
-    r_idx = upper.index("R")
-    c_idx = upper.index("C")
-    row = int(name[r_idx + 1:c_idx], 16)
-    col = int(name[c_idx + 1:], 16)
-    return row, col
+    if name[:1].upper() != "R":
+        raise ValueError(f"bundle filename doesn't start with R: {path}")
+    rest = name[1:]  # <L hex digits> + "C" + <L hex digits>
+    if len(rest) % 2 != 1:
+        raise ValueError(f"bundle filename has unexpected length (row/col not "
+                          f"equal-width?): {path}")
+    width = (len(rest) - 1) // 2
+    row_str, sep, col_str = rest[:width], rest[width:width + 1], rest[width + 1:]
+    if sep.upper() != "C":
+        raise ValueError(f"bundle filename's expected separator position isn't 'C' "
+                          f"(got {sep!r}) -- row/col widths may not actually be equal: {path}")
+    if len(col_str) != width:
+        raise ValueError(f"bundle filename's col field width ({len(col_str)}) doesn't "
+                          f"match row field width ({width}): {path}")
+    return int(row_str, 16), int(col_str, 16)
 
 
 def read_bundle_tiles(path):
