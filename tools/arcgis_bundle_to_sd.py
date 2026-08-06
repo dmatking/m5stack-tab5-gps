@@ -186,6 +186,36 @@ def read_bundle_tiles(path):
                 yield base_row + local_row, base_col + local_col, data
 
 
+def to_jpeg_if_needed(tile_bytes):
+    """ArcGIS Compact caches can mix PNG in with JPEG tiles even when
+    conf.xml declares CacheTileFormat=JPEG -- ArcGIS falls back to PNG for
+    tiles with real transparency (typically right at the edge of the data
+    extent, where the tile is only partially covered), since JPEG has no
+    alpha channel. Confirmed on real hardware: the ESP32-P4's hardware JPEG
+    decoder doesn't just cleanly reject non-JPEG bytes, it wedges hard
+    enough to trip the interrupt watchdog (a real crash, not just a decode
+    failure) -- so re-encode anything that isn't already a JPEG here,
+    before it ever reaches the shard, rather than ever handing the device
+    something that isn't actually what its extension/format field claims.
+    Returns (jpeg_bytes, was_converted)."""
+    if tile_bytes[:2] == b"\xff\xd8":
+        return tile_bytes, False
+    img = Image.open(BytesIO(tile_bytes))
+    if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+        # JPEG has no alpha channel -- flatten transparency onto white
+        # rather than let PIL's .convert("RGB") silently do something less
+        # predictable with it.
+        rgba = img.convert("RGBA")
+        bg = Image.new("RGB", img.size, (255, 255, 255))
+        bg.paste(rgba, mask=rgba.split()[-1])
+        img = bg
+    else:
+        img = img.convert("RGB")
+    buf = BytesIO()
+    img.save(buf, format="JPEG", quality=85)
+    return buf.getvalue(), True
+
+
 def ensure_under_size_cap(jpeg_bytes, context):
     if len(jpeg_bytes) <= MAX_JPEG_TILE_BYTES:
         return jpeg_bytes
@@ -294,17 +324,27 @@ def main():
     print(f"reading {len(bundle_paths)} bundle file(s) for level {args.level}...")
 
     tile_lookup = {}
+    png_count = 0
     for path in bundle_paths:
         n = 0
-        for row, col, jpeg_bytes in read_bundle_tiles(path):
+        for row, col, tile_bytes in read_bundle_tiles(path):
             # ArcGIS (row, col) == standard XYZ (tile_y, tile_x), verbatim --
             # see the module docstring for why, and validate_conf() above for
             # the checks that catch it not actually being true for this export.
             tx, ty = col, row
-            jpeg_bytes = ensure_under_size_cap(jpeg_bytes, f"tile {tx},{ty}")
-            tile_lookup[(tx, ty)] = jpeg_bytes
+            tile_bytes, was_png = to_jpeg_if_needed(tile_bytes)
+            if was_png:
+                png_count += 1
+            tile_bytes = ensure_under_size_cap(tile_bytes, f"tile {tx},{ty}")
+            tile_lookup[(tx, ty)] = tile_bytes
             n += 1
         print(f"  {os.path.basename(path)}: {n} tile(s)")
+
+    if png_count:
+        print(f"note: {png_count} tile(s) were PNG (real transparency, typically at the edge of "
+              f"the data extent) instead of the JPEG conf.xml declares -- re-encoded to JPEG "
+              f"(transparency flattened onto white) since the on-device hardware decoder can't "
+              f"handle non-JPEG bytes")
 
     if not tile_lookup:
         raise SystemExit("no tiles found -- is this really the right level/package?")
