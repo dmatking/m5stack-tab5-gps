@@ -140,53 +140,73 @@ def bundle_files_for_level(pkg_dir, level):
             yield os.path.join(level_dir, name)
 
 
-def parse_bundle_name(path):
-    """R<rrrr>C<cccc>.bundle -> (row, col) -- hex, absolute tile coords of
-    the bundle's top-left (lowest row/col) tile.
+def parse_bundle_name(path, level):
+    """R<hex>C<hex>.bundle -> (row, col) -- hex, absolute tile coords of the
+    bundle's top-left (lowest row/col) tile.
 
-    NOT parsed by scanning for a literal 'C': hex digits can themselves
-    contain the letter 'c' (0xC=12), and confirmed on a real export
-    (level 13's actual bundle was R0c80C0700.bundle -- the row value
-    "0c80" contains a 'c', which a naive "find the first C" scan mistakes
-    for the row/col separator, silently producing a wrong split with no
-    error). Also confirmed real-world width varies by level (4 hex digits
-    at z13, 8 at z16 in this same package) -- a greedy-regex ("R(hex+)C
-    (hex+)") fix was considered and rejected: it's *also* silently wrong
-    whenever the column's own value happens to start with a 'C' digit,
-    since regex backtracking-from-longest will swallow that leading C into
-    the row group instead of treating it as part of the column.
+    Genuinely tricky to parse right, and this project has now been wrong
+    twice on real data before landing here:
 
-    Instead, rely on row and col always being padded to the SAME width as
-    each other within one filename -- true by construction, since the Web
-    Mercator tile grid is always square at any given level, so row and col
-    share the same possible value range and the same natural padding
-    width. The filename is "R" + <L hex digits> + "C" + <L hex digits> for
-    some L, so L is recoverable directly from the filename's total length,
-    with no character-scanning ambiguity at all.
+    1st attempt: scan for the first literal 'C' as the separator. Broken
+    because hex digits can themselves be 'c' (0xC=12) -- a real z13 bundle
+    was R0c80C0700.bundle, whose row value "0c80" contains a 'c' that a
+    naive scan mistakes for the separator, silently producing a wrong
+    split with no error.
+
+    2nd attempt: assume row and col are always padded to equal width
+    (true by construction, reasoned, since the tile grid is square at any
+    given level so row/col share the same value range) -- ALSO broken,
+    confirmed on a real z18 bundle: R19a80Ce800.bundle has a 5-hex-digit
+    row (0x19a80) but only a 4-hex-digit col (0xe800). ArcGIS pads each
+    field to its own minimum width independently (at least 4 digits per
+    the spec, but no more than a given value actually needs) -- not a
+    shared width between the two fields. A greedy-regex fix was also
+    considered along the way and rejected on paper: it's silently wrong
+    whenever the column value happens to start with 'C'.
+
+    Real fix: the filename alone is genuinely ambiguous when hex digits
+    collide with the separator -- resolve it with the one piece of outside
+    information available: the valid tile range for this zoom level ([0,
+    2**level)). Try every 'c'/'C' character as a candidate separator, keep
+    only candidates where both sides are at least 4 hex digits (the
+    spec's stated minimum) AND both parse to a value inside the valid
+    range for `level`. Exactly one candidate should survive; if zero or
+    more than one do, stop and say so rather than silently guess.
     """
     name = os.path.splitext(os.path.basename(path))[0]
     if name[:1].upper() != "R":
         raise ValueError(f"bundle filename doesn't start with R: {path}")
-    rest = name[1:]  # <L hex digits> + "C" + <L hex digits>
-    if len(rest) % 2 != 1:
-        raise ValueError(f"bundle filename has unexpected length (row/col not "
-                          f"equal-width?): {path}")
-    width = (len(rest) - 1) // 2
-    row_str, sep, col_str = rest[:width], rest[width:width + 1], rest[width + 1:]
-    if sep.upper() != "C":
-        raise ValueError(f"bundle filename's expected separator position isn't 'C' "
-                          f"(got {sep!r}) -- row/col widths may not actually be equal: {path}")
-    if len(col_str) != width:
-        raise ValueError(f"bundle filename's col field width ({len(col_str)}) doesn't "
-                          f"match row field width ({width}): {path}")
-    return int(row_str, 16), int(col_str, 16)
+    rest = name[1:]
+    max_valid = (1 << level) - 1
+
+    candidates = []
+    for i, ch in enumerate(rest):
+        if ch.upper() != "C":
+            continue
+        row_str, col_str = rest[:i], rest[i + 1:]
+        if len(row_str) < 4 or len(col_str) < 4:
+            continue
+        try:
+            row_val, col_val = int(row_str, 16), int(col_str, 16)
+        except ValueError:
+            continue
+        if 0 <= row_val <= max_valid and 0 <= col_val <= max_valid:
+            candidates.append((row_val, col_val))
+
+    if len(candidates) == 1:
+        return candidates[0]
+    if not candidates:
+        raise ValueError(f"couldn't find a valid row/col split for level {level} "
+                          f"(valid range 0-{max_valid}): {path}")
+    raise ValueError(f"ambiguous row/col split -- {len(candidates)} candidates all "
+                      f"valid for level {level}: {candidates} in {path}")
 
 
-def read_bundle_tiles(path):
+def read_bundle_tiles(path, level):
     """Yields (row, col, jpeg_bytes) for every present tile in this bundle --
     row/col are absolute tile coordinates (bundle's base + local 0..127),
     per CompactCacheV2.md's header/index/tile-record layout."""
-    base_row, base_col = parse_bundle_name(path)
+    base_row, base_col = parse_bundle_name(path, level)
     with open(path, "rb") as f:
         header = f.read(HEADER_SIZE)
         if len(header) != HEADER_SIZE:
@@ -357,7 +377,7 @@ def main():
     png_count = 0
     for path in bundle_paths:
         n = 0
-        for row, col, tile_bytes in read_bundle_tiles(path):
+        for row, col, tile_bytes in read_bundle_tiles(path, args.level):
             # ArcGIS (row, col) == standard XYZ (tile_y, tile_x), verbatim --
             # see the module docstring for why, and validate_conf() above for
             # the checks that catch it not actually being true for this export.
