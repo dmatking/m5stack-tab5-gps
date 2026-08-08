@@ -24,3 +24,13 @@ void ui_overlay_draw_gps_status(int32_t zoom);
 // map's pan math) against the zoom buttons. Returns true and sets *delta to
 // +1 (zoom in) or -1 (zoom out) if (x,y) falls inside a button.
 bool ui_overlay_hit_test_zoom(int16_t x, int16_t y, int *delta);
+
+// Draw the "locate me" / home button (crosshair-in-a-circle) directly above
+// the zoom buttons. Same call-site contract as ui_overlay_draw_zoom_buttons().
+// follow_active switches its background to a highlight color so it's visible
+// at a glance whether GPS-follow mode (see map_view.c) is currently on.
+void ui_overlay_draw_home_button(bool follow_active);
+
+// Hit-test a touch point against the home button, same coordinate space as
+// ui_overlay_hit_test_zoom().
+bool ui_overlay_hit_test_home(int16_t x, int16_t y);

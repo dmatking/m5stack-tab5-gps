@@ -94,6 +94,27 @@ static const embedded_zoom_t *pick_starting_level(void)
     return MAP_EMBEDDED_ZOOM_COUNT > 0 ? &MAP_EMBEDDED_ZOOMS[0] : NULL;
 }
 
+// Not relying on M_PI from math.h -- newlib provides it, but this avoids any
+// feature-test-macro dependency for one constant used in exactly one place.
+static const double MAP_PI = 3.14159265358979323846;
+
+// WGS84 lat/lon -> world-pixel coordinates at the given zoom, using the same
+// spherical Web Mercator projection tools/fetch_tiles.py's deg2tile() uses
+// (see there for the tile-index form of this formula). Kept in double
+// precision and scaled straight to pixels rather than truncated to an
+// integer tile index first, so the fix lands under the exact map center
+// instead of just somewhere inside the right tile.
+static void lonlat_to_world_px(double lat_deg, double lon_deg, int32_t zoom,
+                                int32_t *out_x, int32_t *out_y)
+{
+    double lat_rad = lat_deg * (MAP_PI / 180.0);
+    double n = (double)(1 << zoom);
+    double x = (lon_deg + 180.0) / 360.0 * n;
+    double y = (1.0 - log(tan(lat_rad) + 1.0 / cos(lat_rad)) / MAP_PI) / 2.0 * n;
+    *out_x = (int32_t)(x * (double)MAP_TILE_SIZE);
+    *out_y = (int32_t)(y * (double)MAP_TILE_SIZE);
+}
+
 static void map_task(void *arg)
 {
     (void)arg;
@@ -164,6 +185,28 @@ static void map_task(void *arg)
     bool screen_on = true;
     int64_t last_activity_us = esp_timer_get_time();
 
+    // One-shot GPS-derived initial position: the SD/flash-derived location
+    // above is shown immediately at boot (a fix can take anywhere from a
+    // couple seconds to tens of seconds to acquire, especially cold), then
+    // gets overridden the first time a real fix arrives, at MAP_ZOOM -- not
+    // a continuous "follow me" mode, just a better guess at where to start
+    // than whatever happened to be on the SD card/in flash. Suppressed for
+    // good once the user actually touches the screen, so a fix arriving
+    // mid-drag doesn't yank the view out from under them.
+    bool gps_centered = false;
+    bool user_interacted = false;
+
+    // Continuous GPS follow, toggled by the home/"locate me" button
+    // (ui_overlay_draw_home_button()/ui_overlay_hit_test_home()) -- distinct
+    // from the one-shot boot centering above: this stays active across
+    // every new fix (recentering each time, at whatever zoom is current)
+    // until the user actually drags the map, per their explicit request.
+    // Zoom-button/double-tap zoom deliberately does NOT cancel it -- staying
+    // centered through a zoom change is the expected feel for a "follow me"
+    // mode (matches how most nav apps treat +/- while tracking); only a
+    // manual pan means "stop following".
+    bool follow_gps = false;
+
     while (1) {
         ticks_since_log++;
 
@@ -215,6 +258,31 @@ static void map_task(void *arg)
             tile_cache_mark_dirty();
         }
 
+        if (!gps_centered && !user_interacted && cur_gps_state.latlon_valid && gps_has_fix()) {
+            int32_t gx, gy;
+            lonlat_to_world_px(cur_gps_state.latitude_deg, cur_gps_state.longitude_deg,
+                                MAP_ZOOM, &gx, &gy);
+            pan_x = gx - MAP_LOGICAL_W / 2;
+            pan_y = gy - MAP_LOGICAL_H / 2;
+            zoom = MAP_ZOOM;
+            gps_centered = true;
+            tile_cache_mark_dirty();
+            ESP_LOGI(TAG, "Centering initial view on first GPS fix: %.6f, %.6f at z%d",
+                     cur_gps_state.latitude_deg, cur_gps_state.longitude_deg, (int)MAP_ZOOM);
+        }
+
+        // Continuous follow: recompute every loop tick while active, not
+        // just when cur_gps_state changed -- a zoom-button press while
+        // following changes zoom but not position, and still needs pan_x/y
+        // recomputed at the new zoom to stay centered on the same fix.
+        if (follow_gps && cur_gps_state.latlon_valid && gps_has_fix()) {
+            int32_t gx, gy;
+            lonlat_to_world_px(cur_gps_state.latitude_deg, cur_gps_state.longitude_deg,
+                                zoom, &gx, &gy);
+            pan_x = gx - MAP_LOGICAL_W / 2;
+            pan_y = gy - MAP_LOGICAL_H / 2;
+        }
+
         int16_t lx = 0, ly = 0;
         if (pressed) {
             to_logical(raw_pt.x, raw_pt.y, &lx, &ly);
@@ -222,7 +290,10 @@ static void map_task(void *arg)
 
         if (pressed) {
             if (!was_pressed) {
-                // Fresh touch-down.
+                // Fresh touch-down. Also permanently retires the one-shot
+                // GPS initial-centering above -- once the user's driving the
+                // view themselves, a fix arriving later shouldn't override it.
+                user_interacted = true;
                 touch_down_us = now;
                 touch_down_x = lx;
                 touch_down_y = ly;
@@ -233,11 +304,20 @@ static void map_task(void *arg)
                 if (ui_overlay_hit_test_zoom(lx, ly, &delta)) {
                     zoom_at_point(&pan_x, &pan_y, &zoom, MAP_LOGICAL_W / 2, MAP_LOGICAL_H / 2, delta);
                     touch_is_button = true;
+                } else if (ui_overlay_hit_test_home(lx, ly)) {
+                    // Recentering itself happens on the very next loop tick
+                    // via the follow_gps block above, once a fix is/becomes
+                    // available -- no need to duplicate that math here.
+                    follow_gps = true;
+                    touch_is_button = true;
                 } else {
                     touch_is_button = false;
                 }
             } else if (!touch_is_button) {
                 if (dragging) {
+                    // This is the literal "moved the map manually" moment --
+                    // stop following until the home button is pressed again.
+                    follow_gps = false;
                     pan_x -= (int32_t)(lx - last_x);
                     pan_y -= (int32_t)(ly - last_y);
                 }
@@ -272,6 +352,7 @@ static void map_task(void *arg)
 
         if (tile_cache_render_viewport(pan_x, pan_y, zoom, dragging)) {
             ui_overlay_draw_zoom_buttons();
+            ui_overlay_draw_home_button(follow_gps);
             ui_overlay_draw_gps_status(zoom);
             board_lcd_commit();
 

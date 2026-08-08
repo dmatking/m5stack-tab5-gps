@@ -28,6 +28,10 @@ static ppa_client_handle_t s_ppa_fill;
 #define ZOOM_OUT_Y  (MAP_LOGICAL_H - MAP_BUTTON_MARGIN - MAP_BUTTON_SIZE)
 #define GLYPH_PAD   16
 
+// Home/"locate me" button -- same column, stacked directly above zoom-in.
+#define HOME_X      ZOOM_IN_X
+#define HOME_Y      (ZOOM_IN_Y - MAP_BUTTON_GAP - MAP_BUTTON_SIZE)
+
 void ui_overlay_init(void)
 {
     ppa_client_config_t fill_cfg = { .oper_type = PPA_OPERATION_FILL, .max_pending_trans_num = 1 };
@@ -227,4 +231,69 @@ void ui_overlay_draw_gps_status(int32_t zoom)
     int icon_y = (MAP_STATUS_BAR_H - STATUS_SD_ICON_SIZE) / 2;
     fill_logical_rect(fb, nat_w, nat_h, icon_x, icon_y, STATUS_SD_ICON_SIZE, STATUS_SD_ICON_SIZE,
                        gps_log_active() ? STATUS_SD_OK_RGB565 : STATUS_SD_BAD_RGB565);
+}
+
+// ---------------------------------------------------------------------------
+// Home / "locate me" button -- crosshair-in-a-circle icon. The ring and
+// center dot are curves, so (like the status bar's text) they're rasterized
+// per-pixel with a plain squared-distance test rather than forced into
+// rects; the four crosshair ticks poking out past the ring *are* straight
+// bars, so those stay on the PPA fill path used everywhere else in this
+// file. All of it is tiny (one ~40px-radius icon) and only redrawn on
+// frames that were already going to redraw for other reasons, same
+// unconditional-per-dirty-frame convention as the zoom buttons.
+// ---------------------------------------------------------------------------
+
+static void draw_ring_and_dot(uint8_t *fb, int nat_w, int nat_h, int cx, int cy)
+{
+    int outer = MAP_HOME_RING_RADIUS;
+    int inner = MAP_HOME_RING_RADIUS - MAP_HOME_RING_THICKNESS;
+    int outer2 = outer * outer;
+    int inner2 = inner * inner;
+    int dot2 = MAP_HOME_DOT_RADIUS * MAP_HOME_DOT_RADIUS;
+
+    for (int dy = -outer; dy <= outer; dy++) {
+        for (int dx = -outer; dx <= outer; dx++) {
+            int d2 = dx * dx + dy * dy;
+            if ((d2 <= outer2 && d2 >= inner2) || d2 <= dot2) {
+                set_logical_pixel(fb, nat_w, nat_h, cx + dx, cy + dy, MAP_HOME_GLYPH_RGB565);
+            }
+        }
+    }
+}
+
+static void draw_ticks(uint8_t *fb, int nat_w, int nat_h, int cx, int cy)
+{
+    int t = MAP_HOME_TICK_THICKNESS;
+    int lo = MAP_HOME_RING_RADIUS + MAP_HOME_TICK_GAP;   // distance from center to near end
+    int len = MAP_HOME_TICK_LEN;
+
+    // North / south (vertical ticks, centered on the x axis).
+    fill_logical_rect(fb, nat_w, nat_h, cx - t / 2, cy - lo - len, t, len, MAP_HOME_GLYPH_RGB565);
+    fill_logical_rect(fb, nat_w, nat_h, cx - t / 2, cy + lo, t, len, MAP_HOME_GLYPH_RGB565);
+    // East / west (horizontal ticks, centered on the y axis).
+    fill_logical_rect(fb, nat_w, nat_h, cx - lo - len, cy - t / 2, len, t, MAP_HOME_GLYPH_RGB565);
+    fill_logical_rect(fb, nat_w, nat_h, cx + lo, cy - t / 2, len, t, MAP_HOME_GLYPH_RGB565);
+}
+
+void ui_overlay_draw_home_button(bool follow_active)
+{
+    uint8_t *fb = board_lcd_hw_framebuffer();
+    if (!fb) return;
+    int nat_w = board_lcd_width();
+    int nat_h = board_lcd_height();
+
+    fill_logical_rect(fb, nat_w, nat_h, HOME_X, HOME_Y, MAP_BUTTON_SIZE, MAP_BUTTON_SIZE,
+                       follow_active ? MAP_HOME_BG_ACTIVE_RGB565 : MAP_HOME_BG_RGB565);
+
+    int cx = HOME_X + MAP_BUTTON_SIZE / 2;
+    int cy = HOME_Y + MAP_BUTTON_SIZE / 2;
+    draw_ring_and_dot(fb, nat_w, nat_h, cx, cy);
+    draw_ticks(fb, nat_w, nat_h, cx, cy);
+}
+
+bool ui_overlay_hit_test_home(int16_t x, int16_t y)
+{
+    return x >= HOME_X && x < HOME_X + MAP_BUTTON_SIZE &&
+           y >= HOME_Y && y < HOME_Y + MAP_BUTTON_SIZE;
 }

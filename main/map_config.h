@@ -33,6 +33,21 @@
 #define MAP_BUTTON_GLYPH_RGB565    0xFFFF  // white
 #define MAP_BUTTON_GLYPH_THICKNESS 8       // px, the "+"/"-" bar thickness
 
+// "Locate me" / home button (crosshair-in-a-circle icon), stacked directly
+// above the zoom buttons in the same column -- see main/ui_overlay.c for the
+// icon drawing and main/map_view.c for the follow-GPS behavior it triggers.
+// Same button footprint (MAP_BUTTON_SIZE) as the zoom buttons; only the
+// icon geometry inside it is different.
+#define MAP_HOME_RING_RADIUS       18  // px, outer radius of the circle outline
+#define MAP_HOME_RING_THICKNESS    3   // px
+#define MAP_HOME_DOT_RADIUS        4   // px, solid center dot
+#define MAP_HOME_TICK_GAP          3   // px, gap between the ring and each tick
+#define MAP_HOME_TICK_LEN          9   // px
+#define MAP_HOME_TICK_THICKNESS    5   // px
+#define MAP_HOME_BG_RGB565         0x2104  // near-black, matches the zoom buttons when inactive
+#define MAP_HOME_BG_ACTIVE_RGB565  0x045F  // blue highlight while follow mode is on
+#define MAP_HOME_GLYPH_RGB565      0xFFFF  // white
+
 // Tile cache: worst-case on-screen tiles for a 1280x720 logical viewport at
 // 256px tiles is 6 cols x 4 rows = 24 (same total either orientation, just
 // swapped axes). With adjacent-zoom-level prefetch (see tile_cache.c), up to
