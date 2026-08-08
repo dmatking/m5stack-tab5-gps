@@ -76,6 +76,16 @@ uint8_t *board_lcd_hw_framebuffer(void);
 // in as the one being scanned out. No memcpy.
 void board_lcd_commit(void);
 
+// Re-assert board_lcd_commit()'s own DPI refresh-done callback registration.
+// Needed after anything else (e.g. esp_lvgl_port's DSI display driver) has
+// called esp_lcd_dpi_panel_register_event_callbacks() itself -- that API is
+// a single overwritable slot, not additive, so whoever registered last wins
+// and board_lcd_commit() would otherwise block forever waiting on a
+// semaphore nothing signals anymore. Call before the first board_lcd_commit()
+// after anything else has touched that registration. No-op default for
+// boards that don't define it.
+void board_lcd_reclaim_refresh_callback(void);
+
 // ---------------------------------------------------------------------------
 // Hardware handles — needed by the touch driver.
 // NULL until board_init() has been called.

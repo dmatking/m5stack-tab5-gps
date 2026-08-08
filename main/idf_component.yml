@@ -4,3 +4,17 @@ dependencies:
     version: ">=1.0.0"
   espressif/esp_tinyusb:
     version: "^2.0.1~1"
+  # UI shell (splash/menu/settings screens) -- see main/ui_shell.c. Same
+  # versions verified working on this exact board/panel in
+  # m5stack-tab5-lvgl-primer; the map screen itself stays on the existing
+  # native PPA path (main/tile_cache.c etc.), untouched by LVGL -- see
+  # ui_shell.c's comment on the lvgl_port_stop()/map_view_start() handoff.
+  lvgl/lvgl:
+    version: "^9.3.0"
+  # Pinned exact, not a caret range: 2.9.0 changed its MIPI-DSI callback
+  # struct field for "IDF >= 5.5.0" (on_refresh_done -> on_frame_buf_complete,
+  # see its CHANGELOG), but this project's actual IDF v6.0.1 build doesn't
+  # have that rename -- 2.9.0 fails to compile here. 2.8.0 is what's
+  # actually verified working on this board/IDF combo (m5stack-tab5-lvgl-primer).
+  espressif/esp_lvgl_port:
+    version: "2.8.0"

@@ -16,6 +16,7 @@
 #include "sd_xfer.h"
 #include "touch.h"
 #include "ui_overlay.h"
+#include "ui_shell.h"
 #include "usb_msc.h"
 
 static const char *TAG = "APP";
@@ -90,6 +91,9 @@ void app_main(void)
     tile_sd_init();  // scans /sdcard for shard files -- must come after sd_card_mount()
     tile_cache_init();
     ui_overlay_init();
-    map_view_start();
+
+    // Everything above has to be ready before this: the shell's Map button
+    // hands off straight into map_view_start(), see ui_shell.c.
+    ui_shell_start();
 #endif
 }
