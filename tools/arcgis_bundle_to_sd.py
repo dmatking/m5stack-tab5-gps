@@ -236,28 +236,55 @@ def read_bundle_tiles(path, level):
                 yield base_row + local_row, base_col + local_col, data
 
 
+# A tile with average alpha below this is treated as "no imagery here" (an
+# ArcGIS-native absence marker) rather than real content -- see
+# to_jpeg_if_needed()'s docstring. Confirmed bimodal in practice on the
+# real z19 export (average alpha was always either near 0 or near 255,
+# never in between), so this threshold isn't trying to split a continuum,
+# just separating two well-separated real clusters.
+TRANSPARENT_HOLE_ALPHA_THRESHOLD = 10
+
+
 def to_jpeg_if_needed(tile_bytes):
     """ArcGIS Compact caches can mix PNG in with JPEG tiles even when
     conf.xml declares CacheTileFormat=JPEG -- ArcGIS falls back to PNG for
-    tiles with real transparency (typically right at the edge of the data
-    extent, where the tile is only partially covered), since JPEG has no
-    alpha channel. Confirmed on real hardware: the ESP32-P4's hardware JPEG
-    decoder doesn't just cleanly reject non-JPEG bytes, it wedges hard
-    enough to trip the interrupt watchdog (a real crash, not just a decode
-    failure) -- so re-encode anything that isn't already a JPEG here,
-    before it ever reaches the shard, rather than ever handing the device
-    something that isn't actually what its extension/format field claims.
-    Returns (jpeg_bytes, was_converted)."""
+    tiles with real transparency, since JPEG has no alpha channel.
+    Confirmed on real hardware: the ESP32-P4's hardware JPEG decoder
+    doesn't just cleanly reject non-JPEG bytes, it wedges hard enough to
+    trip the interrupt watchdog (a real crash, not just a decode failure)
+    -- so re-encode anything that isn't already a JPEG here, before it
+    ever reaches the shard.
+
+    Also detects tiles that are fully (or very nearly fully) transparent --
+    these are ArcGIS's own "no imagery here" markers, not tiles with real
+    content that merely touch the transparent edge of coverage. Confirmed
+    on the real z19 export (sampled broadly across the whole extent, not
+    just one corner): ~36% of z19's "present" tiles were entirely
+    transparent PNGs. The original version of this function flattened
+    those onto white and stored them as real tiles, producing widespread
+    blank white tiles on the device instead of the intended procedural
+    placeholder pattern that genuine holes already get -- a real, visible
+    bug reported after deploying z19 to hardware, not something synthetic
+    testing surfaced.
+
+    Returns (jpeg_bytes, was_converted) normally; (None, True) for
+    fully-transparent tiles that the caller should treat as absent (a
+    hole), same as if the tile were missing from the bundle entirely.
+    """
     if tile_bytes[:2] == b"\xff\xd8":
         return tile_bytes, False
     img = Image.open(BytesIO(tile_bytes))
     if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
-        # JPEG has no alpha channel -- flatten transparency onto white
-        # rather than let PIL's .convert("RGB") silently do something less
-        # predictable with it.
         rgba = img.convert("RGBA")
+        alpha = rgba.split()[-1]
+        avg_alpha = sum(alpha.getdata()) / (alpha.width * alpha.height)
+        if avg_alpha < TRANSPARENT_HOLE_ALPHA_THRESHOLD:
+            return None, True  # no real imagery here -- treat as absent
+        # JPEG has no alpha channel -- flatten the (real) transparency onto
+        # white rather than let PIL's .convert("RGB") silently do something
+        # less predictable with it.
         bg = Image.new("RGB", img.size, (255, 255, 255))
-        bg.paste(rgba, mask=rgba.split()[-1])
+        bg.paste(rgba, mask=alpha)
         img = bg
     else:
         img = img.convert("RGB")
@@ -375,6 +402,7 @@ def main():
 
     tile_lookup = {}
     png_count = 0
+    transparent_hole_count = 0
     for path in bundle_paths:
         n = 0
         for row, col, tile_bytes in read_bundle_tiles(path, args.level):
@@ -383,6 +411,9 @@ def main():
             # the checks that catch it not actually being true for this export.
             tx, ty = col, row
             tile_bytes, was_png = to_jpeg_if_needed(tile_bytes)
+            if tile_bytes is None:
+                transparent_hole_count += 1
+                continue  # no real imagery here -- treat as absent, same as a missing tile
             if was_png:
                 png_count += 1
             tile_bytes = ensure_under_size_cap(tile_bytes, f"tile {tx},{ty}")
@@ -391,10 +422,13 @@ def main():
         print(f"  {os.path.basename(path)}: {n} tile(s)")
 
     if png_count:
-        print(f"note: {png_count} tile(s) were PNG (real transparency, typically at the edge of "
-              f"the data extent) instead of the JPEG conf.xml declares -- re-encoded to JPEG "
-              f"(transparency flattened onto white) since the on-device hardware decoder can't "
-              f"handle non-JPEG bytes")
+        print(f"note: {png_count} tile(s) were PNG (real transparency) instead of the JPEG "
+              f"conf.xml declares -- re-encoded to JPEG (transparency flattened onto white) "
+              f"since the on-device hardware decoder can't handle non-JPEG bytes")
+    if transparent_hole_count:
+        print(f"note: {transparent_hole_count} tile(s) were fully transparent (ArcGIS's own "
+              f"\"no imagery here\" marker, not real content) -- treated as absent so the "
+              f"on-device procedural placeholder shows instead of a blank white tile")
 
     if not tile_lookup:
         raise SystemExit("no tiles found -- is this really the right level/package?")
