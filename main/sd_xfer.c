@@ -307,9 +307,18 @@ void sd_xfer_run(void)
     // comment above for why: stdin's fgets() never reliably saw incoming
     // bytes once this driver was installed mid-boot, even though writes
     // (ESP_LOG, printf) kept working fine.
+    // rx_buffer_size must comfortably exceed one full "XFER DATA <b64>\n"
+    // line (~8014 bytes at RAW_CHUNK_SIZE=6000) -- confirmed on real
+    // hardware that leaving it at 4096 (smaller than a single line) causes
+    // silent data loss: any brief stall on this task's side while a line
+    // is still streaming in (fwrite() to the SD card is the obvious one --
+    // FAT cluster allocation/metadata flushes can easily take tens of ms)
+    // lets the ring wrap and overwrite bytes read_line() hasn't drained
+    // yet, with no error raised anywhere -- every upload just silently
+    // came up short, caught only by do_transfer()'s final size check.
     usb_serial_jtag_driver_config_t usj_cfg = {
         .tx_buffer_size = 4096,
-        .rx_buffer_size = 4096,
+        .rx_buffer_size = 16384,
     };
     ESP_ERROR_CHECK(usb_serial_jtag_driver_install(&usj_cfg));
 
