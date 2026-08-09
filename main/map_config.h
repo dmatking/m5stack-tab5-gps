@@ -92,6 +92,16 @@
 // same convention as a zoom-button touch. 0 disables the timeout.
 #define MAP_SCREEN_TIMEOUT_US  180000000  // 3min
 
+// Swipe-up-from-the-bottom-edge gesture: leaves the Map screen and returns
+// to the LVGL menu shell (see ui_shell.c). Checked at touch-release against
+// where the touch *started* (not a live threshold), so an ordinary drag/pan
+// that happens to start near the bottom edge still works exactly as before
+// unless the whole gesture nets a clean upward swipe -- net vertical
+// movement has to both clear MAP_EXIT_GESTURE_MIN_UP_PX and dominate net
+// horizontal drift, so a diagonal pan doesn't accidentally trigger it.
+#define MAP_EXIT_GESTURE_MARGIN_PX   60   // touch-down must start within this many px of the bottom edge
+#define MAP_EXIT_GESTURE_MIN_UP_PX   120  // minimum net upward movement to count as the gesture
+
 // Height (logical rows, top of screen) of the GPS status bar drawn by
 // main/ui_overlay.c. Shared with main/tile_cache.c, which clips tile
 // compositing to never write into this strip at all -- previously tiles and

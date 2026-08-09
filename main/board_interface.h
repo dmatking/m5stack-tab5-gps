@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_io.h"
+#include "esp_lcd_mipi_dsi.h"
 #include "driver/i2c_master.h"
 
 void board_init(void);
@@ -76,15 +77,22 @@ uint8_t *board_lcd_hw_framebuffer(void);
 // in as the one being scanned out. No memcpy.
 void board_lcd_commit(void);
 
-// Re-assert board_lcd_commit()'s own DPI refresh-done callback registration.
-// Needed after anything else (e.g. esp_lvgl_port's DSI display driver) has
-// called esp_lcd_dpi_panel_register_event_callbacks() itself -- that API is
-// a single overwritable slot, not additive, so whoever registered last wins
-// and board_lcd_commit() would otherwise block forever waiting on a
-// semaphore nothing signals anymore. Call before the first board_lcd_commit()
-// after anything else has touched that registration. No-op default for
-// boards that don't define it.
-void board_lcd_reclaim_refresh_callback(void);
+// esp_lcd_dpi_panel_register_event_callbacks() replaces BOTH callback slots
+// (on_refresh_done and on_color_trans_done) every time it's called -- it's
+// not additive, so two independent owners each registering their own single
+// callback (e.g. board_lcd_commit()'s on_refresh_done here, and
+// esp_lvgl_port's on_color_trans_done for its DSI flush-ready signal) would
+// silently clobber each other every time either one (re-)registers.
+// Confirmed by reading esp-idf's esp_lcd_panel_dpi.c: both fields are a
+// plain unconditional assignment from whatever struct was last passed.
+//
+// Call this ONCE, after board_init() (which already owns on_refresh_done)
+// and after anything else that wants to register on_color_trans_done has
+// been set up (e.g. right after esp_lvgl_port's lvgl_port_add_disp_dsi() in
+// ui_shell.c) -- it re-registers both together in a single call and stores
+// the given callback so this can be called again safely if ever needed.
+// No-op default for boards that don't define it.
+void board_lcd_register_color_trans_done_cb(esp_lcd_dpi_panel_color_trans_done_cb_t cb, void *user_ctx);
 
 // ---------------------------------------------------------------------------
 // Hardware handles — needed by the touch driver.

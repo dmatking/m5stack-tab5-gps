@@ -17,11 +17,27 @@
 // the panel at all) and then starts the native map task, which takes over
 // completely from there.
 //
-// Known limitation, deliberately deferred rather than guessed at: this
-// handoff is one-way for now -- map_view.c's render loop has no exit hook,
-// so there's no way back to this menu once the map starts. Left as the
-// next thing to verify/build once this direction (LVGL shell + native map
-// screen) is confirmed sound on real hardware at all.
+// The Map screen exits back to this menu via a swipe-up-from-the-bottom-
+// edge gesture (see main/map_view.c -> ui_shell_return_to_menu(), below).
+//
+// Earlier version of this file tried to make the two sides "hand off" the
+// DPI panel's on_refresh_done/on_color_trans_done callback registration to
+// each other on every transition (steal it entering the map, give it back
+// leaving it). That's real, and really was needed -- LVGL's own flush-ready
+// signal in this display mode is delivered through on_color_trans_done, and
+// esp_lvgl_port re-registering it on init silently clobbers board_init()'s
+// on_refresh_done registration (board_lcd_commit() blocks on that one) --
+// but doing it as a hand-off, live, is fragile: it locked up on the very
+// first swipe-back on real hardware (LVGL's own wait_for_flushing() stuck
+// forever, confirmed via addr2line against the crash dump). The two
+// callbacks are for genuinely different, non-conflicting events (a
+// per-frame VSYNC tick our board_lcd_commit() needs vs. a per-flush
+// color-copy-done signal LVGL needs, fired from completely different
+// contexts -- ISR vs. synchronous task-context), so there's no real reason
+// they can't both just stay registered all the time. Fixed the right way:
+// register both together, ONCE (board_lcd_register_color_trans_done_cb(),
+// called below), and never touch the registration again in either
+// direction -- see its comment in board_interface.h for the full story.
 
 #include "ui_shell.h"
 
@@ -30,6 +46,7 @@
 #include "map_view.h"
 #include "touch.h"
 
+#include "esp_lcd_mipi_dsi.h"
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
 #include "lvgl.h"
@@ -39,6 +56,7 @@
 
 static const char *TAG = "UI_SHELL";
 
+static lv_display_t *s_disp;
 static lv_obj_t *s_screen_main;
 static lv_obj_t *s_screen_settings;
 
@@ -60,12 +78,34 @@ static void map_button_cb(lv_event_t *e)
     (void)e;
     ESP_LOGI(TAG, "Map selected -- stopping LVGL and handing the panel to the native map renderer");
     lvgl_port_stop();
-    // lvgl_port_add_disp_dsi() (below) registered its own DPI refresh-done
-    // callback, silently overwriting board_init()'s -- board_lcd_commit()
-    // would hang forever on its very first call otherwise. See the comment
-    // on board_lcd_reclaim_refresh_callback() for how this was confirmed.
-    board_lcd_reclaim_refresh_callback();
     map_view_start();
+}
+
+// Mirrors esp_lvgl_port's own (private) DPI on_color_trans_done callback --
+// see the file header comment for why this is registered permanently
+// alongside board_init()'s on_refresh_done rather than fought over.
+static bool dsi_flush_ready_cb(esp_lcd_panel_handle_t panel, esp_lcd_dpi_panel_event_data_t *edata, void *user_ctx)
+{
+    (void)panel; (void)edata;
+    lv_disp_flush_ready((lv_display_t *)user_ctx);
+    return false;
+}
+
+void ui_shell_return_to_menu(void)
+{
+    ESP_LOGI(TAG, "Returning to the menu");
+    lvgl_port_resume();
+
+    if (lvgl_port_lock(0)) {
+        lv_screen_load(s_screen_main);
+        // The physical framebuffer was fully overwritten by the native map
+        // renderer while LVGL was stopped -- LVGL's own dirty-tracking has
+        // no way to know that happened, so it still thinks s_screen_main is
+        // already loaded and unchanged since last drawn and skips
+        // redrawing most of it. Force it to redraw for real.
+        lv_obj_invalidate(s_screen_main);
+        lvgl_port_unlock();
+    }
 }
 
 static void settings_button_cb(lv_event_t *e)
@@ -186,11 +226,21 @@ void ui_shell_start(void)
     const lvgl_port_display_dsi_cfg_t dsi_cfg = {
         .flags = { .avoid_tearing = false },
     };
-    lv_display_t *disp = lvgl_port_add_disp_dsi(&disp_cfg, &dsi_cfg);
-    if (!disp) {
+    s_disp = lvgl_port_add_disp_dsi(&disp_cfg, &dsi_cfg);
+    if (!s_disp) {
         ESP_LOGE(TAG, "lvgl_port_add_disp_dsi failed");
         return;
     }
+
+    // lvgl_port_add_disp_dsi() just registered its own on_color_trans_done
+    // callback directly, clobbering board_init()'s on_refresh_done in the
+    // process (single-call registration API, see board_interface.h's
+    // comment on this function). Fix it up once, permanently -- re-registers
+    // both together so board_lcd_commit() and LVGL's flush-ready signal both
+    // keep working from here on, with no further hand-off needed in either
+    // direction (see the file header comment for why the earlier live
+    // hand-off approach was fragile and is gone).
+    board_lcd_register_color_trans_done_cb(dsi_flush_ready_cb, s_disp);
 
     if (lvgl_port_lock(0)) {
         // Polling indev, not interrupt-driven -- this board's touch IRQ
@@ -198,7 +248,7 @@ void ui_shell_start(void)
         lv_indev_t *indev = lv_indev_create();
         lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
         lv_indev_set_read_cb(indev, touch_read_cb);
-        lv_indev_set_disp(indev, disp);
+        lv_indev_set_disp(indev, s_disp);
 
         build_main_screen();
         build_settings_screen();

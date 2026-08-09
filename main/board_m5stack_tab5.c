@@ -392,27 +392,31 @@ void board_lcd_set_backlight(bool on)
     ledc_update_duty(LEDC_LOW_SPEED_MODE, LCD_LEDC_CHAN);
 }
 
-// esp_lcd_dpi_panel_register_event_callbacks() is a single-slot registration
-// (esp-idf/components/esp_lcd/dsi/esp_lcd_panel_dpi.c just assigns
-// dpi_panel->on_refresh_done = cbs->on_refresh_done -- last caller wins,
-// unconditionally, even to NULL). esp_lvgl_port's lvgl_port_add_disp_dsi()
-// calls this same function for its own DSI display and, in the
-// avoid_tearing=false mode ui_shell.c uses, passes a struct with
-// on_refresh_done left NULL -- which silently wipes out the registration
-// board_init() made below for dpi_refresh_done_cb(), the callback
-// board_lcd_commit() blocks on. Confirmed by reading both sides' source,
-// not assumed: without reclaiming it, the first board_lcd_commit() call
-// after ui_shell_start() runs (i.e. the first frame the native map
-// renderer ever draws) would hang forever waiting on a semaphore nothing
-// signals anymore.
-//
-// Call this once, right after lvgl_port_stop() and before handing control
-// to anything that calls board_lcd_commit() (see ui_shell.c's map button
-// handler) -- restores the exact registration board_init() made originally.
-void board_lcd_reclaim_refresh_callback(void)
+// See the comment on board_lcd_register_color_trans_done_cb() (board_interface.h)
+// for why on_refresh_done and on_color_trans_done have to be (re-)registered
+// together, in one call, rather than each owner registering its own
+// independently. This forwards to whatever main/ui_shell.c registered, if
+// anything -- NULL (the default, nothing registered yet) is a harmless no-op.
+static esp_lcd_dpi_panel_color_trans_done_cb_t s_extra_color_trans_cb = NULL;
+static void *s_extra_color_trans_ctx = NULL;
+
+static bool dpi_color_trans_done_cb(esp_lcd_panel_handle_t panel, esp_lcd_dpi_panel_event_data_t *edata, void *user_ctx)
 {
-    esp_lcd_dpi_panel_event_callbacks_t refresh_cbs = { .on_refresh_done = dpi_refresh_done_cb };
-    ESP_ERROR_CHECK(esp_lcd_dpi_panel_register_event_callbacks(s_panel, &refresh_cbs, NULL));
+    if (s_extra_color_trans_cb) {
+        return s_extra_color_trans_cb(panel, edata, s_extra_color_trans_ctx);
+    }
+    return false;
+}
+
+void board_lcd_register_color_trans_done_cb(esp_lcd_dpi_panel_color_trans_done_cb_t cb, void *user_ctx)
+{
+    s_extra_color_trans_cb = cb;
+    s_extra_color_trans_ctx = user_ctx;
+    esp_lcd_dpi_panel_event_callbacks_t cbs = {
+        .on_color_trans_done = dpi_color_trans_done_cb,
+        .on_refresh_done = dpi_refresh_done_cb,
+    };
+    ESP_ERROR_CHECK(esp_lcd_dpi_panel_register_event_callbacks(s_panel, &cbs, NULL));
 }
 
 const char *board_get_name(void) { return BOARD_NAME; }

@@ -18,4 +18,4 @@ __attribute__((weak)) void board_lcd_set_pixel_rgb(int x, int y, uint8_t r, uint
 __attribute__((weak)) uint16_t board_lcd_pack_rgb(uint8_t r, uint8_t g, uint8_t b) { (void)r; (void)g; (void)b; return 0; }
 __attribute__((weak)) uint16_t board_lcd_get_pixel_raw(int x, int y) { (void)x; (void)y; return 0; }
 __attribute__((weak)) void board_lcd_unpack_rgb(uint16_t color, uint8_t *r, uint8_t *g, uint8_t *b) { (void)color; if (r) *r = 0; if (g) *g = 0; if (b) *b = 0; }
-__attribute__((weak)) void board_lcd_reclaim_refresh_callback(void) {}
+__attribute__((weak)) void board_lcd_register_color_trans_done_cb(esp_lcd_dpi_panel_color_trans_done_cb_t cb, void *user_ctx) { (void)cb; (void)user_ctx; }

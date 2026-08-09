@@ -12,3 +12,9 @@
 // Returns immediately; the splash/menu/map flow all continue on their own
 // tasks from here.
 void ui_shell_start(void);
+
+// Called from the Map screen (main/map_view.c, on its swipe-up-from-bottom
+// exit gesture) to hand the panel back to LVGL and show the main menu
+// again. Caller is expected to delete its own task immediately after
+// calling this; it doesn't return control to map_view.c.
+void ui_shell_return_to_menu(void);

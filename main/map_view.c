@@ -24,6 +24,7 @@
 #include "tile_sd.h"
 #include "touch.h"
 #include "ui_overlay.h"
+#include "ui_shell.h"
 
 #include <math.h>
 #include <stdbool.h>
@@ -330,6 +331,22 @@ static void map_task(void *arg)
 
         } else {
             if (was_pressed && !touch_is_button) {
+                // Swipe up from the bottom edge -- leave the Map screen and
+                // hand back to the LVGL menu (see ui_shell.c). Judged at
+                // release against where the touch *started*, not a live
+                // threshold, so an ordinary drag/pan starting near the
+                // bottom edge still works exactly as before unless the
+                // whole gesture nets a clean upward swipe.
+                int32_t net_up = (int32_t)touch_down_y - (int32_t)last_y;
+                int32_t net_side = (int32_t)last_x - (int32_t)touch_down_x;
+                if (net_side < 0) net_side = -net_side;
+                if (touch_down_y >= MAP_LOGICAL_H - MAP_EXIT_GESTURE_MARGIN_PX &&
+                    net_up >= MAP_EXIT_GESTURE_MIN_UP_PX && net_side < net_up) {
+                    ESP_LOGI(TAG, "Swipe up from bottom edge -- returning to the menu");
+                    ui_shell_return_to_menu();
+                    vTaskDelete(NULL);
+                }
+
                 int64_t duration = now - touch_down_us;
                 if (duration < MAP_TAP_MAX_DURATION_US && touch_max_move < MAP_TAP_MAX_MOVEMENT_PX) {
                     if (have_last_tap && (now - last_tap_us) < MAP_DOUBLE_TAP_WINDOW_US &&
