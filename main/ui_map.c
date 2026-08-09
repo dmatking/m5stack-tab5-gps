@@ -1,4 +1,5 @@
 #include "ui_map.h"
+#include <stdio.h>
 
 static ui_map_t s_map;
 
@@ -255,8 +256,15 @@ void ui_map_set_destination(ui_map_t *m, const char *name, float dist_mi,
     if (!m) return;
     if (name) lv_label_set_text(m->dest_name, name);
     lv_label_set_text_fmt(m->dest_dist, "%.1f mi", dist_mi);
-    lv_label_set_text_fmt(m->dest_sub, "brg %03d\xC2\xB0 \xC2\xB7 ETA %s",
-                          bearing_deg, eta ? eta : "--:--");
+    // Numeric spec formatted separately from the %s -- see the comment on
+    // the equivalent fix in ui_nav.c's ui_nav_set_cross_track() for why
+    // (a confirmed real crash mixing a float spec with %s in the same
+    // lv_label_set_text_fmt() call; this one hadn't been exercised yet
+    // but is the same risk shape, not worth waiting to find out).
+    char brg_buf[8];
+    snprintf(brg_buf, sizeof(brg_buf), "%03d", bearing_deg);
+    lv_label_set_text_fmt(m->dest_sub, "brg %s\xC2\xB0 \xC2\xB7 ETA %s",
+                          brg_buf, eta ? eta : "--:--");
 }
 
 void ui_map_set_dest_marker(ui_map_t *m, lv_coord_t x, lv_coord_t y)
