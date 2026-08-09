@@ -13,7 +13,14 @@
 // the procedural fallback pattern from tile_synth.c instead.
 #define MAP_ZOOM        16
 #define MAP_MIN_ZOOM    10
-#define MAP_MAX_ZOOM    19
+// z19 was tried and dropped (2026-08-08): ArcGIS's "Recreate Missing Tiles"
+// pass came back byte-for-byte identical to the original export -- the
+// blank tiles at z19 are genuine gaps in the underlying Esri source
+// imagery (confirmed by decoding the raw tile at a known-covered address
+// and finding it uniformly transparent straight out of Pro's own cache),
+// not something a recreate pass can fix. z18 is the deepest zoom level
+// that's actually reliable, so it's the cap.
+#define MAP_MAX_ZOOM    18
 
 // Double-tap-to-zoom: max duration/movement for a press to count as a
 // "tap", and max time/distance between two taps to pair them into a
