@@ -57,3 +57,11 @@ CONFIG_LV_FONT_MONTSERRAT_28=y
 CONFIG_LV_FONT_MONTSERRAT_48=y
 # CONFIG_LV_BUILD_EXAMPLES is not set
 # CONFIG_LV_BUILD_DEMOS is not set
+
+# main/mockup_viewer.c: full-screen PNG mockups read straight off the SD
+# card (see sd_xfer.c's transfer path -- they're not embedded in flash,
+# same "big media lives on the SD card" pattern as the map tiles).
+CONFIG_LV_USE_LODEPNG=y
+CONFIG_LV_USE_FS_STDIO=y
+CONFIG_LV_FS_STDIO_LETTER=83
+CONFIG_LV_FS_STDIO_PATH=""

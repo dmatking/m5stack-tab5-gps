@@ -44,6 +44,7 @@
 #include "board_interface.h"
 #include "map_config.h"
 #include "map_view.h"
+#include "mockup_viewer.h"
 #include "touch.h"
 
 #include "esp_lcd_mipi_dsi.h"
@@ -108,6 +109,20 @@ void ui_shell_return_to_menu(void)
     }
 }
 
+void ui_shell_show_main_menu(void)
+{
+    if (lvgl_port_lock(0)) {
+        lv_screen_load(s_screen_main);
+        lvgl_port_unlock();
+    }
+}
+
+static void mockups_button_cb(lv_event_t *e)
+{
+    (void)e;
+    mockup_viewer_start();
+}
+
 static void settings_button_cb(lv_event_t *e)
 {
     (void)e;
@@ -145,10 +160,14 @@ static void build_main_screen(void)
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 60);
 
     lv_obj_t *map_btn = make_menu_button(s_screen_main, "Map", map_button_cb);
-    lv_obj_align(map_btn, LV_ALIGN_CENTER, 0, -70);
+    lv_obj_align(map_btn, LV_ALIGN_CENTER, 0, -140);
 
     lv_obj_t *settings_btn = make_menu_button(s_screen_main, "Settings", settings_button_cb);
-    lv_obj_align(settings_btn, LV_ALIGN_CENTER, 0, 70);
+    lv_obj_align(settings_btn, LV_ALIGN_CENTER, 0, 0);
+
+    // Visual-design mockups, not a real feature -- see main/mockup_viewer.c.
+    lv_obj_t *mockups_btn = make_menu_button(s_screen_main, "Mockups", mockups_button_cb);
+    lv_obj_align(mockups_btn, LV_ALIGN_CENTER, 0, 140);
 }
 
 static void build_settings_screen(void)

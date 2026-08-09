@@ -18,3 +18,9 @@ void ui_shell_start(void);
 // again. Caller is expected to delete its own task immediately after
 // calling this; it doesn't return control to map_view.c.
 void ui_shell_return_to_menu(void);
+
+// Switches straight back to the main menu screen -- for callers that are
+// already LVGL screens themselves (e.g. main/mockup_viewer.c) and don't
+// need the native-renderer handoff ui_shell_return_to_menu() does. Takes
+// the LVGL port lock itself.
+void ui_shell_show_main_menu(void);
