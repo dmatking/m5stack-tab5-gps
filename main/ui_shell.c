@@ -146,7 +146,17 @@ static void splash_task(void *arg)
 
     if (lvgl_port_lock(0)) {
         lv_screen_load(ui_home()->screen);
-        lv_obj_delete(splash);
+        // Deliberately NOT calling lv_obj_delete(splash) here anymore --
+        // hit a real crash on real hardware (Guru Meditation Error, Load
+        // access fault deep inside LVGL's own lv_event_mark_deleted(),
+        // confirmed via addr2line against the exact PC/stack). Only
+        // reproduced once in a handful of boots, right around the same
+        // ~1.5s mark this delete always runs at, after gps_ui_bridge.c's
+        // periodic task started competing for the same LVGL lock -- never
+        // fully root-caused (would need a debugger, not just log
+        // archaeology), but a splash screen is cheap enough to just leak
+        // forever rather than risk it. A few hundred bytes, once, for the
+        // life of the app -- not worth chasing a heisenbug over tonight.
         lvgl_port_unlock();
     }
 

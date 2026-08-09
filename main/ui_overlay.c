@@ -155,9 +155,9 @@ bool ui_overlay_hit_test_zoom(int16_t x, int16_t y, int *delta)
 // Bar height itself (MAP_STATUS_BAR_H) now lives in map_config.h -- shared
 // with tile_cache.c, which clips tile compositing to exclude this strip.
 #define STATUS_MARGIN_X 8
-#define STATUS_BG_RGB565   0x2104  // near-black, matches MAP_BUTTON_BG_RGB565
-#define STATUS_FG_RGB565   0xFFFF  // white
-#define STATUS_FIX_RGB565  0x07E0  // green, used for "FIX" instead of white
+#define STATUS_BG_RGB565   MAP_THEME_BG_RGB565     // matches ui_theme.h's screen background, not a card
+#define STATUS_FG_RGB565   0xFFFF                  // white
+#define STATUS_FIX_RGB565  MAP_THEME_GREEN_RGB565  // used for "FIX" instead of white
 
 // Small square at the right edge of the bar showing whether the SD log is
 // actually writable right now -- not just whether the card mounted at boot.
@@ -165,8 +165,8 @@ bool ui_overlay_hit_test_zoom(int16_t x, int16_t y, int *delta)
 // the card had mounted fine, but nobody could tell logging wasn't actually
 // happening until the walk was over and the file was checked back home.
 #define STATUS_SD_ICON_SIZE   16
-#define STATUS_SD_OK_RGB565    0x07E0  // green -- ordinary RGB565, fill_logical_rect() converts it correctly
-#define STATUS_SD_BAD_RGB565   0xF800  // red
+#define STATUS_SD_OK_RGB565    MAP_THEME_GREEN_RGB565  // ordinary RGB565, fill_logical_rect() converts it correctly
+#define STATUS_SD_BAD_RGB565   MAP_THEME_RED_RGB565
 
 static inline void set_logical_pixel(uint8_t *fb, int nat_w, int nat_h, int lx, int ly, uint16_t color)
 {

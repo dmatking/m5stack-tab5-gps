@@ -31,12 +31,27 @@
 #define MAP_DOUBLE_TAP_WINDOW_US    400000
 #define MAP_DOUBLE_TAP_RADIUS_PX    40
 
+// Colors below are RGB565 conversions of main/ui_theme.h's palette (that
+// file is LVGL/RGB888-only, lv_color_hex() macros -- can't be #included
+// here without pulling LVGL into the native tile-render path, so the
+// values are ported by hand instead; see that file if the theme changes).
+// Keeps the Map screen's own chrome consistent with the real Home screen
+// rather than looking like a bolted-on different app -- these used to be
+// plain ad-hoc near-black/pure-green/pure-red before the design UI existed
+// to match at all.
+#define MAP_THEME_CARD_RGB565    0x08A3  // ui_theme.h UI_C_CARD   0x0D141C
+#define MAP_THEME_NAVBAR_RGB565  0x0862  // ui_theme.h UI_C_NAVBAR 0x080C11
+#define MAP_THEME_BG_RGB565      0x0041  // ui_theme.h UI_C_BG     0x05080C
+#define MAP_THEME_BLUE_RGB565    0x2C1D  // ui_theme.h UI_C_BLUE   0x2F80ED
+#define MAP_THEME_GREEN_RGB565   0x3E85  // ui_theme.h UI_C_GREEN  0x3ED12A
+#define MAP_THEME_RED_RGB565     0xE32D  // ui_theme.h UI_C_RED    0xE5646E
+
 // On-screen zoom +/- buttons (see main/ui_overlay.c), stacked in the
 // bottom-right corner of the logical viewport. Zoom-in is above zoom-out.
 #define MAP_BUTTON_SIZE            80
 #define MAP_BUTTON_MARGIN          20
 #define MAP_BUTTON_GAP             12
-#define MAP_BUTTON_BG_RGB565       0x2104  // near-black
+#define MAP_BUTTON_BG_RGB565       MAP_THEME_CARD_RGB565
 #define MAP_BUTTON_GLYPH_RGB565    0xFFFF  // white
 #define MAP_BUTTON_GLYPH_THICKNESS 8       // px, the "+"/"-" bar thickness
 
@@ -51,8 +66,8 @@
 #define MAP_HOME_TICK_GAP          3   // px, gap between the ring and each tick
 #define MAP_HOME_TICK_LEN          9   // px
 #define MAP_HOME_TICK_THICKNESS    5   // px
-#define MAP_HOME_BG_RGB565         0x2104  // near-black, matches the zoom buttons when inactive
-#define MAP_HOME_BG_ACTIVE_RGB565  0x045F  // blue highlight while follow mode is on
+#define MAP_HOME_BG_RGB565         MAP_THEME_CARD_RGB565  // matches the zoom buttons when inactive
+#define MAP_HOME_BG_ACTIVE_RGB565  MAP_THEME_BLUE_RGB565  // highlight while follow mode is on
 #define MAP_HOME_GLYPH_RGB565      0xFFFF  // white
 
 // Tile cache: worst-case on-screen tiles for a 1280x720 logical viewport at
