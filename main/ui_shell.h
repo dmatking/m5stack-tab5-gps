@@ -19,13 +19,17 @@ void ui_shell_start(void);
 // definition in ui_shell.c for why ui_map's own screen isn't used.
 void ui_shell_enter_map(void);
 
-// Called from the Map screen (main/map_view.c, on its swipe-up-from-bottom
-// exit gesture) to hand the panel back to LVGL and show the Home screen
-// again. Caller is expected to delete its own task immediately after
+// Called from the Map screen (main/map_view.c, on a navbar tab tap -- see
+// main/ui_overlay.c's ui_overlay_draw_navbar()) to hand the panel back to
+// LVGL and switch to the given tab. tab_index uses the same 0..4 ordering
+// as ui_overlay.h's ui_overlay_draw_navbar() (0=Home, 1=Map, 2=Nav,
+// 3=Telemetry, 4=More) -- never call this with 1 (Map); map_view.c's own
+// navbar handler already skips it, since the Map screen doesn't hand off
+// to itself. Caller is expected to delete its own task immediately after
 // calling this; it doesn't return control to map_view.c.
-void ui_shell_return_to_menu(void);
+void ui_shell_return_to_tab(int tab_index);
 
 // Switches straight back to the Home screen -- for callers that are
 // already LVGL screens themselves and don't need the native-renderer
-// handoff ui_shell_return_to_menu() does. Takes the LVGL port lock itself.
+// handoff ui_shell_return_to_tab() does. Takes the LVGL port lock itself.
 void ui_shell_show_main_menu(void);

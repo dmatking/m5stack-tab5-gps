@@ -469,7 +469,10 @@ bool tile_cache_render_viewport(int32_t pan_x, int32_t pan_y, int32_t zoom, bool
             int32_t tile_x1 = tile_world_x + MAP_TILE_SIZE;
             int32_t tile_y1 = tile_world_y + MAP_TILE_SIZE;
             int32_t screen_x1 = pan_x + fb_w;
-            int32_t screen_y1 = pan_y + fb_h;
+            // Bottom edge is pulled up past the tab navbar's rows, same
+            // reasoning/fix as the top-of-screen status-bar clip above --
+            // ui_overlay.c owns that strip exclusively now too.
+            int32_t screen_y1 = pan_y + fb_h - MAP_NAVBAR_H;
             int32_t ix1 = tile_x1 < screen_x1 ? tile_x1 : screen_x1;
             int32_t iy1 = tile_y1 < screen_y1 ? tile_y1 : screen_y1;
             if (ix1 <= ix0 || iy1 <= iy0) continue;

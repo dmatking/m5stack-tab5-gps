@@ -39,12 +39,14 @@
 // rather than looking like a bolted-on different app -- these used to be
 // plain ad-hoc near-black/pure-green/pure-red before the design UI existed
 // to match at all.
-#define MAP_THEME_CARD_RGB565    0x08A3  // ui_theme.h UI_C_CARD   0x0D141C
-#define MAP_THEME_NAVBAR_RGB565  0x0862  // ui_theme.h UI_C_NAVBAR 0x080C11
-#define MAP_THEME_BG_RGB565      0x0041  // ui_theme.h UI_C_BG     0x05080C
-#define MAP_THEME_BLUE_RGB565    0x2C1D  // ui_theme.h UI_C_BLUE   0x2F80ED
-#define MAP_THEME_GREEN_RGB565   0x3E85  // ui_theme.h UI_C_GREEN  0x3ED12A
-#define MAP_THEME_RED_RGB565     0xE32D  // ui_theme.h UI_C_RED    0xE5646E
+#define MAP_THEME_CARD_RGB565    0x08A3  // ui_theme.h UI_C_CARD    0x0D141C
+#define MAP_THEME_NAVBAR_RGB565  0x0862  // ui_theme.h UI_C_NAVBAR  0x080C11
+#define MAP_THEME_BG_RGB565      0x0041  // ui_theme.h UI_C_BG      0x05080C
+#define MAP_THEME_BLUE_RGB565    0x2C1D  // ui_theme.h UI_C_BLUE    0x2F80ED
+#define MAP_THEME_GREEN_RGB565   0x3E85  // ui_theme.h UI_C_GREEN   0x3ED12A
+#define MAP_THEME_RED_RGB565     0xE32D  // ui_theme.h UI_C_RED     0xE5646E
+#define MAP_THEME_ICON_RGB565    0x6BD1  // ui_theme.h UI_C_ICON    0x6B7A8A -- inactive navbar tab color
+#define MAP_THEME_DIVIDER_RGB565 0x10E5  // ui_theme.h UI_C_DIVIDER 0x141C25 -- navbar's top border line
 
 // On-screen zoom +/- buttons (see main/ui_overlay.c), stacked in the
 // bottom-right corner of the logical viewport. Zoom-in is above zoom-out.
@@ -114,15 +116,20 @@
 // same convention as a zoom-button touch. 0 disables the timeout.
 #define MAP_SCREEN_TIMEOUT_US  180000000  // 3min
 
-// Swipe-up-from-the-bottom-edge gesture: leaves the Map screen and returns
-// to the LVGL menu shell (see ui_shell.c). Checked at touch-release against
-// where the touch *started* (not a live threshold), so an ordinary drag/pan
-// that happens to start near the bottom edge still works exactly as before
-// unless the whole gesture nets a clean upward swipe -- net vertical
-// movement has to both clear MAP_EXIT_GESTURE_MIN_UP_PX and dominate net
-// horizontal drift, so a diagonal pan doesn't accidentally trigger it.
-#define MAP_EXIT_GESTURE_MARGIN_PX   60   // touch-down must start within this many px of the bottom edge
-#define MAP_EXIT_GESTURE_MIN_UP_PX   120  // minimum net upward movement to count as the gesture
+// Height (logical rows, bottom of screen) of the tab navbar drawn by
+// main/ui_overlay.c -- mirrors main/ui_common.c's real LVGL navbar (same
+// height, same palette, same 5-tab set: Home/Map/Nav/Telemetry/More) so the
+// Map screen doesn't look like a separate, disconnected app bolted onto the
+// real design UI. Tapping a tab other than Map hands the panel back to
+// LVGL and switches straight to it (main/map_view.c -> ui_shell.c's
+// ui_shell_return_to_tab()) -- this replaced an earlier swipe-up-from-the-
+// bottom-edge gesture that only went to Home; the navbar is a strictly
+// better replacement (visible affordance, reaches all 5 tabs, not just
+// Home), and its hit region fully covers where that gesture used to start,
+// so the old code was removed rather than left dead alongside this.
+// Shared with main/tile_cache.c, which (like MAP_STATUS_BAR_H below) clips
+// tile compositing to never write into this strip.
+#define MAP_NAVBAR_H  116  // matches ui_theme.h's UI_NAVBAR_H
 
 // Height (logical rows, top of screen) of the GPS status bar drawn by
 // main/ui_overlay.c. Shared with main/tile_cache.c, which clips tile

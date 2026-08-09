@@ -15,6 +15,7 @@
 #include "map_config.h"
 
 #include <stdio.h>
+#include <string.h>
 
 #include "driver/ppa.h"
 #include "esp_log.h"
@@ -22,10 +23,14 @@
 static const char *TAG = "UI_OVERLAY";
 static ppa_client_handle_t s_ppa_fill;
 
+// Buttons stack up from the top of the navbar now, not the bottom of the
+// full logical screen -- MAP_NAVBAR_H rows at the very bottom belong to
+// ui_overlay_draw_navbar() exclusively (see its own section below).
+#define BUTTON_AREA_BOTTOM (MAP_LOGICAL_H - MAP_NAVBAR_H)
 #define ZOOM_IN_X   (MAP_LOGICAL_W - MAP_BUTTON_MARGIN - MAP_BUTTON_SIZE)
-#define ZOOM_IN_Y   (MAP_LOGICAL_H - MAP_BUTTON_MARGIN - 2 * MAP_BUTTON_SIZE - MAP_BUTTON_GAP)
+#define ZOOM_IN_Y   (BUTTON_AREA_BOTTOM - MAP_BUTTON_MARGIN - 2 * MAP_BUTTON_SIZE - MAP_BUTTON_GAP)
 #define ZOOM_OUT_X  ZOOM_IN_X
-#define ZOOM_OUT_Y  (MAP_LOGICAL_H - MAP_BUTTON_MARGIN - MAP_BUTTON_SIZE)
+#define ZOOM_OUT_Y  (BUTTON_AREA_BOTTOM - MAP_BUTTON_MARGIN - MAP_BUTTON_SIZE)
 #define GLYPH_PAD   16
 
 // Home/"locate me" button -- same column, stacked directly above zoom-in.
@@ -296,4 +301,70 @@ bool ui_overlay_hit_test_home(int16_t x, int16_t y)
 {
     return x >= HOME_X && x < HOME_X + MAP_BUTTON_SIZE &&
            y >= HOME_Y && y < HOME_Y + MAP_BUTTON_SIZE;
+}
+
+// ---------------------------------------------------------------------------
+// Tab navbar -- native mirror of main/ui_common.c's real LVGL navbar (see
+// ui_overlay.h's doc comment for why a native version exists at all: the Map
+// screen doesn't run LVGL). Same 5-tab set/order/palette; text-only (no icon
+// glyphs -- ui_common.c's own icons are just stock LVGL placeholder symbols
+// anyway, per its own comment, so skipping them here loses nothing real).
+// ---------------------------------------------------------------------------
+
+#define NAVBAR_Y        (MAP_LOGICAL_H - MAP_NAVBAR_H)
+#define NAVBAR_TABS     5
+#define NAVBAR_CELL_W   (MAP_LOGICAL_W / NAVBAR_TABS)
+#define NAVBAR_IND_W    56  // px, active-tab indicator bar -- matches ui_common.c's
+#define NAVBAR_IND_H    4
+#define NAVBAR_IND_GAP  10  // px, gap between label baseline and indicator bar
+
+// Must stay in the same order as main/ui_common.h's ui_tab_t (see this
+// file's ui_overlay_draw_navbar()/hit-test doc comments in ui_overlay.h).
+static const char *navbar_tab_text[NAVBAR_TABS] = {
+    "HOME", "MAP", "NAV", "TELEMETRY", "MORE",
+};
+
+void ui_overlay_draw_navbar(int active_tab)
+{
+    uint8_t *fb = board_lcd_hw_framebuffer();
+    if (!fb) return;
+    int nat_w = board_lcd_width();
+    int nat_h = board_lcd_height();
+
+    fill_logical_rect(fb, nat_w, nat_h, 0, NAVBAR_Y, MAP_LOGICAL_W, MAP_NAVBAR_H,
+                       MAP_THEME_NAVBAR_RGB565);
+    // 1px top border, matching ui_common.c's LV_BORDER_SIDE_TOP divider.
+    fill_logical_rect(fb, nat_w, nat_h, 0, NAVBAR_Y, MAP_LOGICAL_W, 1,
+                       MAP_THEME_DIVIDER_RGB565);
+
+    // Vertically centers the (label + gap + indicator) block within the bar.
+    int block_h = STATUS_CHAR_H + NAVBAR_IND_GAP + NAVBAR_IND_H;
+    int top = NAVBAR_Y + (MAP_NAVBAR_H - block_h) / 2;
+
+    for (int i = 0; i < NAVBAR_TABS; i++) {
+        bool on = (i == active_tab);
+        uint16_t color = on ? MAP_THEME_BLUE_RGB565 : MAP_THEME_ICON_RGB565;
+
+        int cell_x0 = i * NAVBAR_CELL_W;
+        int label_w = (int)strlen(navbar_tab_text[i]) * STATUS_CHAR_W;
+        int label_x = cell_x0 + (NAVBAR_CELL_W - label_w) / 2;
+        draw_string_logical(fb, nat_w, nat_h, label_x, top, navbar_tab_text[i], color);
+
+        if (on) {
+            int ind_x = cell_x0 + (NAVBAR_CELL_W - NAVBAR_IND_W) / 2;
+            int ind_y = top + STATUS_CHAR_H + NAVBAR_IND_GAP;
+            fill_logical_rect(fb, nat_w, nat_h, ind_x, ind_y, NAVBAR_IND_W, NAVBAR_IND_H,
+                               MAP_THEME_BLUE_RGB565);
+        }
+    }
+}
+
+bool ui_overlay_hit_test_navbar(int16_t x, int16_t y, int *tab_out)
+{
+    if (y < NAVBAR_Y) return false;
+    int idx = x / NAVBAR_CELL_W;
+    if (idx < 0) idx = 0;
+    if (idx >= NAVBAR_TABS) idx = NAVBAR_TABS - 1;
+    *tab_out = idx;
+    return true;
 }

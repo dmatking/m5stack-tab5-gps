@@ -19,8 +19,13 @@
 // the panel at all) and then starts the native map task, which takes over
 // completely from there.
 //
-// The Map screen exits back to this menu via a swipe-up-from-the-bottom-
-// edge gesture (see main/map_view.c -> ui_shell_return_to_menu(), below).
+// The Map screen exits back to LVGL via its own native navbar (a mirror of
+// the real one, see main/ui_overlay.c's ui_overlay_draw_navbar()) -- tapping
+// any tab but Map calls ui_shell_return_to_tab(), below, and switches
+// straight to it. (This used to be a swipe-up-from-the-bottom-edge gesture
+// that only reached Home -- replaced once the navbar existed, since the
+// navbar is strictly better: a visible affordance instead of a hidden
+// gesture, and it reaches all 5 tabs.)
 //
 // Earlier version of this file tried to make the two sides "hand off" the
 // DPI panel's on_refresh_done/on_color_trans_done callback registration to
@@ -96,20 +101,32 @@ static bool dsi_flush_ready_cb(esp_lcd_panel_handle_t panel, esp_lcd_dpi_panel_e
     return false;
 }
 
-void ui_shell_return_to_menu(void)
+void ui_shell_return_to_tab(int tab_index)
 {
-    ESP_LOGI(TAG, "Returning to the menu");
+    // tab_index matches main/ui_overlay.c's own local ordering (see its doc
+    // comment in ui_overlay.h) -- kept as a plain int across this boundary
+    // so the native map/overlay code doesn't need to pull in design_ui.h's
+    // (LVGL-typed) ui_tab_t. Keep this array in sync by hand if ui_tab_t's
+    // tab set ever changes.
+    static const ui_tab_t tabs[] = {
+        UI_TAB_HOME, UI_TAB_MAP, UI_TAB_NAV, UI_TAB_TELEMETRY, UI_TAB_MORE,
+    };
+    if (tab_index < 0 || tab_index >= (int)(sizeof(tabs) / sizeof(tabs[0]))) {
+        ESP_LOGW(TAG, "ui_shell_return_to_tab: bad tab_index %d, defaulting to Home", tab_index);
+        tab_index = 0;
+    }
+
+    ESP_LOGI(TAG, "Returning to tab %d from the map", tab_index);
     lvgl_port_resume();
 
     if (lvgl_port_lock(0)) {
-        lv_obj_t *home = ui_home()->screen;
-        lv_screen_load(home);
+        ui_show_tab(tabs[tab_index]);
         // The physical framebuffer was fully overwritten by the native map
         // renderer while LVGL was stopped -- LVGL's own dirty-tracking has
-        // no way to know that happened, so it still thinks this screen is
-        // already loaded and unchanged since last drawn and skips
+        // no way to know that happened, so it still thinks the destination
+        // screen is already loaded and unchanged since last drawn and skips
         // redrawing most of it. Force it to redraw for real.
-        lv_obj_invalidate(home);
+        lv_obj_invalidate(lv_screen_active());
         lvgl_port_unlock();
     }
 }
