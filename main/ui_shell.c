@@ -122,12 +122,15 @@ void ui_shell_show_main_menu(void)
     }
 }
 
-// Splash needs a plain delay before switching screens -- runs on its own
-// short-lived task so ui_shell_start() (called from app_main) can return
-// immediately instead of blocking startup on a fixed timer.
-static void splash_task(void *arg)
+// Builds and loads the splash screen. Called synchronously from
+// ui_shell_start(), under lock, BEFORE ui_init() builds the real screens --
+// it used to run on splash_task instead, after ui_init() already loaded
+// Home as its own last step, which raced: default LVGL screen -> Home
+// (flashed on by ui_init()) -> splash (loaded a beat later here) -> Home
+// again. Loading splash first, before anything else exists to flash by,
+// fixes that -- ui_init() no longer loads any screen at all now.
+static lv_obj_t *create_and_load_splash(void)
 {
-    (void)arg;
     lv_obj_t *splash = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(splash, lv_color_black(), 0);
 
@@ -137,10 +140,16 @@ static void splash_task(void *arg)
     lv_obj_set_style_text_color(label, lv_color_white(), 0);
     lv_obj_center(label);
 
-    if (lvgl_port_lock(0)) {
-        lv_screen_load(splash);
-        lvgl_port_unlock();
-    }
+    lv_screen_load(splash);
+    return splash;
+}
+
+// Splash needs a plain delay before switching to Home -- runs on its own
+// short-lived task so ui_shell_start() (called from app_main) can return
+// immediately instead of blocking startup on a fixed timer.
+static void splash_task(void *arg)
+{
+    (void)arg;
 
     vTaskDelay(pdMS_TO_TICKS(1500));
 
@@ -215,6 +224,10 @@ void ui_shell_start(void)
         lv_indev_set_read_cb(indev, touch_read_cb);
         lv_indev_set_disp(indev, s_disp);
 
+        // Splash first, before anything else exists to flash by -- see
+        // create_and_load_splash()'s comment. Only after it's the active
+        // screen do we pay for building the real (heavier) 6-screen UI.
+        create_and_load_splash();
         ui_init();
         lvgl_port_unlock();
     }

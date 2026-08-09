@@ -57,7 +57,10 @@ void ui_init(void)
     ui_goto_set_cancel_cb(s_goto_p, goto_cancel_cb, NULL);
 
     ui_set_navigating(false);
-    lv_screen_load(s_home_p->screen);
+    // Deliberately not loading a screen here -- ui_shell.c controls the
+    // splash-then-Home sequencing at boot (loading Home here raced against
+    // its own splash screen and caused a visible flash: default LVGL screen
+    // -> Home -> splash -> Home).
 }
 
 void ui_show_tab(ui_tab_t tab)
