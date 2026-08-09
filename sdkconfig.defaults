@@ -58,10 +58,27 @@ CONFIG_LV_FONT_MONTSERRAT_48=y
 # CONFIG_LV_BUILD_EXAMPLES is not set
 # CONFIG_LV_BUILD_DEMOS is not set
 
-# main/mockup_viewer.c: full-screen PNG mockups read straight off the SD
-# card (see sd_xfer.c's transfer path -- they're not embedded in flash,
-# same "big media lives on the SD card" pattern as the map tiles).
-CONFIG_LV_USE_LODEPNG=y
-CONFIG_LV_USE_FS_STDIO=y
-CONFIG_LV_FS_STDIO_LETTER=83
-CONFIG_LV_FS_STDIO_PATH=""
+# main/mockup_viewer.c: full-screen mockup images read straight off the SD
+# card as raw RGB565 (see that file's header comment -- LVGL's PNG decoder
+# path was tried first and abandoned after real memory problems on real
+# hardware). No PNG decoder or LVGL filesystem driver needed as a result --
+# the app reads the files itself via plain fopen()/fread() and hands LVGL
+# an LV_IMAGE_SRC_VARIABLE, which flash is thin enough to appreciate not
+# paying for (this app partition was down to 4-5% free with both enabled).
+
+# Surfaces LVGL's own internal errors on the
+# console instead of failing completely silently -- was off by default,
+# which is why the mockup PNGs not loading produced zero diagnostic output.
+CONFIG_LV_USE_LOG=y
+CONFIG_LV_LOG_PRINTF=y
+
+# LVGL's default allocator (LV_USE_BUILTIN_MALLOC) is its own tiny internal
+# pool, LV_MEM_SIZE_KILOBYTES=64 by default -- totally separate from
+# ESP-IDF's heap/PSRAM. A 720x1280 PNG decodes to ~3.6MB (LodePNG always
+# decodes to ARGB8888); confirmed on real hardware that this fails with
+# "error 83: memory allocation failed" against a 64KB pool, no matter how
+# much real PSRAM is free. CLIB_MALLOC routes lv_malloc() through plain
+# malloc()/free(), which -- thanks to CONFIG_SPIRAM_USE_MALLOC above --
+# transparently spills anything past CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL
+# into PSRAM, same as any other large ESP-IDF allocation in this project.
+CONFIG_LV_USE_CLIB_MALLOC=y

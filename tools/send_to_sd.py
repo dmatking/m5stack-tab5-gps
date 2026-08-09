@@ -136,6 +136,16 @@ def main():
         b64 = base64.b64encode(chunk).decode()
         ser.write(f"XFER DATA {b64}\n".encode())
         write_done = time.time()
+        # Explicit per-chunk ack -- without this, large enough transfers
+        # eventually overrun the device's RX ring no matter how big it's
+        # sized (confirmed on real hardware: fine for six ~150KB files,
+        # every one of six ~1.8MB files came up short by a growing amount).
+        # Waiting for the device to confirm each chunk actually got
+        # written before sending the next makes correctness independent
+        # of transfer size instead of "probably fine below some threshold".
+        if wait_for(ser, "XFER CHUNK_OK", timeout=5) is None:
+            print(f"\nERROR: no ack for chunk {i+1}/{n_chunks}", file=sys.stderr, flush=True)
+            sys.exit(1)
         sent += len(chunk)
         pct = 100.0 * sent / total
         elapsed = time.time() - start

@@ -280,6 +280,19 @@ static void do_transfer(const char *filename, long expected_size)
                 crc = crc32_update(crc, s_raw, (size_t)n);
                 total += n;
             }
+            // Explicit per-chunk flow control: without this, large enough
+            // transfers eventually overrun the RX ring no matter how big
+            // it is -- confirmed on real hardware going from a handful of
+            // ~150KB files (fine at rx_buffer_size=16384) to six ~1.8MB
+            // files (each came up short by a growing amount, one more
+            // ~6000-byte chunk missing per file). fwrite() to the SD card
+            // is the likely stall source (same as the original bug), just
+            // needing enough occurrences over a long enough transfer to
+            // matter regardless of ring size. Waiting for this ack before
+            // the PC sends the next line (see tools/send_to_sd.py) makes
+            // correctness independent of transfer size instead of
+            // "probably fine below some threshold".
+            usj_write_str("XFER CHUNK_OK\n");
         } else if (strncmp(s_line, "XFER END ", 9) == 0) {
             fclose(f);
             uint32_t expected_crc = (uint32_t)strtoul(s_line + 9, NULL, 16);
