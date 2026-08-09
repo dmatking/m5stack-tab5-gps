@@ -1,5 +1,5 @@
 list(APPEND EXTRA_REQUIRES "esp_lcd_st7123" "esp_mm" "esp_hw_support" "esp_driver_ledc" "esp_driver_gpio" "esp_driver_i2c" "esp_driver_ppa" "esp_timer" "esp_partition" "esp_driver_jpeg" "fatfs" "sdmmc" "esp_driver_sdmmc" "esp_driver_usb_serial_jtag" "esp_driver_uart" "esp_lvgl_port")
-list(APPEND EXTRA_SRCS "touch.c" "tile_synth.c" "tile_jpeg.c" "tile_sd.c" "tile_cache.c" "ui_overlay.c" "map_view.c" "sd_card.c" "usb_msc.c" "sd_xfer.c" "gps.c" "ui_shell.c" "mockup_viewer.c")
+list(APPEND EXTRA_SRCS "touch.c" "tile_synth.c" "tile_jpeg.c" "tile_sd.c" "tile_cache.c" "ui_overlay.c" "map_view.c" "sd_card.c" "usb_msc.c" "sd_xfer.c" "gps.c" "ui_shell.c" "mockup_viewer.c" "ui_theme.c" "ui_common.c" "ui_home.c" "ui_map.c" "design_ui.c")
 # tile_flash.c (compile-time-embedded flash partition tile source) is
 # deliberately not built right now -- SD-only while verifying the SD tile
 # read/decode path in isolation. The file itself is left alone (not

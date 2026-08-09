@@ -1,9 +1,11 @@
 // Copyright 2025-2026 David M. King
 // SPDX-License-Identifier: Apache-2.0
 //
-// LVGL app shell: splash -> main screen (Map / Settings buttons) -> either
-// a placeholder Settings screen (pure LVGL, round-trips back to the main
-// screen freely) or the real Map screen.
+// LVGL app shell: splash -> the real design UI (main/design_ui.c and
+// friends -- Home screen + tab bar). Superseded the original placeholder
+// 3-button menu (Map/Settings/Mockups) once real Home/Map screens landed
+// 2026-08-09 -- see main/mockup_viewer.c, now orphaned/unreferenced (its
+// whole purpose was previewing the design before real screens existed).
 //
 // The Map screen is NOT an LVGL screen -- it's the existing native PPA
 // tile-compositor path (main/map_view.c/tile_cache.c), which already owns
@@ -42,9 +44,9 @@
 #include "ui_shell.h"
 
 #include "board_interface.h"
+#include "design_ui.h"
 #include "map_config.h"
 #include "map_view.h"
-#include "mockup_viewer.h"
 #include "touch.h"
 
 #include "esp_lcd_mipi_dsi.h"
@@ -58,8 +60,6 @@
 static const char *TAG = "UI_SHELL";
 
 static lv_display_t *s_disp;
-static lv_obj_t *s_screen_main;
-static lv_obj_t *s_screen_settings;
 
 static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
 {
@@ -74,9 +74,13 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
     }
 }
 
-static void map_button_cb(lv_event_t *e)
+// Called from design_ui.c's ui_show_tab() when the MAP tab is selected --
+// ui_map's own screen is a decorative placeholder (schematic grid, demo
+// route/track lines, no real cartography, see ui_map.c's header comment),
+// not meant to actually be shown. This hands off to the native renderer
+// exactly like the old placeholder menu's "Map" button did.
+void ui_shell_enter_map(void)
 {
-    (void)e;
     ESP_LOGI(TAG, "Map selected -- stopping LVGL and handing the panel to the native map renderer");
     lvgl_port_stop();
     map_view_start();
@@ -98,13 +102,14 @@ void ui_shell_return_to_menu(void)
     lvgl_port_resume();
 
     if (lvgl_port_lock(0)) {
-        lv_screen_load(s_screen_main);
+        lv_obj_t *home = ui_home()->screen;
+        lv_screen_load(home);
         // The physical framebuffer was fully overwritten by the native map
         // renderer while LVGL was stopped -- LVGL's own dirty-tracking has
-        // no way to know that happened, so it still thinks s_screen_main is
+        // no way to know that happened, so it still thinks this screen is
         // already loaded and unchanged since last drawn and skips
         // redrawing most of it. Force it to redraw for real.
-        lv_obj_invalidate(s_screen_main);
+        lv_obj_invalidate(home);
         lvgl_port_unlock();
     }
 }
@@ -112,78 +117,9 @@ void ui_shell_return_to_menu(void)
 void ui_shell_show_main_menu(void)
 {
     if (lvgl_port_lock(0)) {
-        lv_screen_load(s_screen_main);
+        lv_screen_load(ui_home()->screen);
         lvgl_port_unlock();
     }
-}
-
-static void mockups_button_cb(lv_event_t *e)
-{
-    (void)e;
-    mockup_viewer_start();
-}
-
-static void settings_button_cb(lv_event_t *e)
-{
-    (void)e;
-    lv_screen_load(s_screen_settings);
-}
-
-static void settings_back_cb(lv_event_t *e)
-{
-    (void)e;
-    lv_screen_load(s_screen_main);
-}
-
-static lv_obj_t *make_menu_button(lv_obj_t *parent, const char *text, lv_event_cb_t cb)
-{
-    lv_obj_t *btn = lv_button_create(parent);
-    lv_obj_set_size(btn, 400, 100);
-    lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, NULL);
-
-    lv_obj_t *label = lv_label_create(btn);
-    lv_label_set_text(label, text);
-    lv_obj_set_style_text_font(label, &lv_font_montserrat_28, 0);
-    lv_obj_center(label);
-    return btn;
-}
-
-static void build_main_screen(void)
-{
-    s_screen_main = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(s_screen_main, lv_color_black(), 0);
-
-    lv_obj_t *title = lv_label_create(s_screen_main);
-    lv_label_set_text(title, "GPS");
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_28, 0);
-    lv_obj_set_style_text_color(title, lv_color_white(), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 60);
-
-    lv_obj_t *map_btn = make_menu_button(s_screen_main, "Map", map_button_cb);
-    lv_obj_align(map_btn, LV_ALIGN_CENTER, 0, -140);
-
-    lv_obj_t *settings_btn = make_menu_button(s_screen_main, "Settings", settings_button_cb);
-    lv_obj_align(settings_btn, LV_ALIGN_CENTER, 0, 0);
-
-    // Visual-design mockups, not a real feature -- see main/mockup_viewer.c.
-    lv_obj_t *mockups_btn = make_menu_button(s_screen_main, "Mockups", mockups_button_cb);
-    lv_obj_align(mockups_btn, LV_ALIGN_CENTER, 0, 140);
-}
-
-static void build_settings_screen(void)
-{
-    s_screen_settings = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(s_screen_settings, lv_color_black(), 0);
-
-    lv_obj_t *label = lv_label_create(s_screen_settings);
-    lv_label_set_text(label, "Settings\n(nothing here yet)");
-    lv_obj_set_style_text_font(label, &lv_font_montserrat_28, 0);
-    lv_obj_set_style_text_color(label, lv_color_white(), 0);
-    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_center(label);
-
-    lv_obj_t *back_btn = make_menu_button(s_screen_settings, "Back", settings_back_cb);
-    lv_obj_align(back_btn, LV_ALIGN_BOTTOM_MID, 0, -60);
 }
 
 // Splash needs a plain delay before switching screens -- runs on its own
@@ -209,7 +145,7 @@ static void splash_task(void *arg)
     vTaskDelay(pdMS_TO_TICKS(1500));
 
     if (lvgl_port_lock(0)) {
-        lv_screen_load(s_screen_main);
+        lv_screen_load(ui_home()->screen);
         lv_obj_delete(splash);
         lvgl_port_unlock();
     }
@@ -269,8 +205,7 @@ void ui_shell_start(void)
         lv_indev_set_read_cb(indev, touch_read_cb);
         lv_indev_set_disp(indev, s_disp);
 
-        build_main_screen();
-        build_settings_screen();
+        ui_init();
         lvgl_port_unlock();
     }
 

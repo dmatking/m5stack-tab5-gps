@@ -13,8 +13,8 @@ CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 # See m5stack-tab5-ssh-terminal's OTA work for the original diagnosis.
 CONFIG_SPI_FLASH_AUTO_SUSPEND=y
 
-# Custom partition table -- adds a "tiledata" raw partition holding
-# pre-converted RGB565 map tiles (see partitions.csv, main/tile_flash.c)
+# Custom partition table -- dual-OTA-slot layout (ota_0/ota_1), see
+# partitions.csv
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 
@@ -47,28 +47,35 @@ CONFIG_SPIRAM_MEMTEST=y
 CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
 CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=32768
 
-# LVGL (main/ui_shell.c -- splash/menu/settings screens, map screen stays
-# native). Same settings verified working on this board/panel in
-# m5stack-tab5-lvgl-primer.
+# LVGL (main/ui_shell.c + main/design_ui.c and friends -- splash + the
+# real Home/Map screens, map screen itself stays native). Same base
+# settings verified working on this board/panel in m5stack-tab5-lvgl-primer.
 CONFIG_LV_CONF_SKIP=y
 CONFIG_LV_COLOR_DEPTH_16=y
 CONFIG_LV_COLOR_DEPTH=16
+# Montserrat sizes the design UI's fallback theme falls back to when
+# UI_USE_CUSTOM_FONTS=0 (see ui_theme.c) -- 20/24/28/32/40 for that, 48
+# also used directly by ui_shell.c's own splash screen text.
+CONFIG_LV_FONT_MONTSERRAT_20=y
+CONFIG_LV_FONT_MONTSERRAT_24=y
 CONFIG_LV_FONT_MONTSERRAT_28=y
+CONFIG_LV_FONT_MONTSERRAT_32=y
+CONFIG_LV_FONT_MONTSERRAT_40=y
 CONFIG_LV_FONT_MONTSERRAT_48=y
 # CONFIG_LV_BUILD_EXAMPLES is not set
 # CONFIG_LV_BUILD_DEMOS is not set
 
-# main/mockup_viewer.c: full-screen mockup images read straight off the SD
-# card as raw RGB565 (see that file's header comment -- LVGL's PNG decoder
-# path was tried first and abandoned after real memory problems on real
-# hardware). No PNG decoder or LVGL filesystem driver needed as a result --
-# the app reads the files itself via plain fopen()/fread() and hands LVGL
-# an LV_IMAGE_SRC_VARIABLE, which flash is thin enough to appreciate not
-# paying for (this app partition was down to 4-5% free with both enabled).
+# main/mockup_viewer.c (now orphaned/unreferenced, see ui_shell.c's header
+# comment): full-screen mockup images read straight off the SD card as raw
+# RGB565 -- LVGL's PNG decoder path was tried first and abandoned after
+# real memory problems on real hardware. No PNG decoder or LVGL filesystem
+# driver needed as a result -- the app reads the files itself via plain
+# fopen()/fread() and hands LVGL an LV_IMAGE_SRC_VARIABLE.
 
-# Surfaces LVGL's own internal errors on the
+# Surfaces LVGL's own internal errors (failed fs_open/decode, etc.) on the
 # console instead of failing completely silently -- was off by default,
-# which is why the mockup PNGs not loading produced zero diagnostic output.
+# which is why the mockup PNGs not loading produced zero diagnostic output
+# the first time this was needed.
 CONFIG_LV_USE_LOG=y
 CONFIG_LV_LOG_PRINTF=y
 
