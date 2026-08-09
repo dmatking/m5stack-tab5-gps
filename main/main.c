@@ -8,6 +8,7 @@
 
 #include "board_interface.h"
 #include "gps.h"
+#include "gps_ui_bridge.h"
 #include "map_view.h"
 #include "sd_card.h"
 #include "tile_cache.h"
@@ -95,5 +96,10 @@ void app_main(void)
     // Everything above has to be ready before this: the shell's Map button
     // hands off straight into map_view_start(), see ui_shell.c.
     ui_shell_start();
+
+    // ui_shell_start() builds the Home screen synchronously (under lock)
+    // before returning, so ui_home() is already valid here even though the
+    // splash screen is still showing in front of it.
+    gps_ui_bridge_start();
 #endif
 }

@@ -27,10 +27,14 @@ typedef struct {
     bool time_valid;        // utc_tm time fields are valid
     bool date_valid;        // utc_tm date fields are valid
     bool speed_valid;       // speed_knots is valid
+    bool hdop_valid;        // hdop is valid
+    bool altitude_valid;    // altitude_m is valid
     double latitude_deg;    // decimal degrees, negative = south
     double longitude_deg;   // decimal degrees, negative = west
     float speed_knots;
     float heading_deg;      // true track from RMC
+    float hdop;             // horizontal dilution of precision (lower = better)
+    float altitude_m;       // antenna altitude above mean sea level, meters
     int sats_in_use;
     struct tm utc_tm;       // UTC time/date (populated incrementally from GGA + RMC)
 } gps_state_t;

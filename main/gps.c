@@ -138,6 +138,9 @@ static void handle_gga(char *sentence)
     char *ew   = next_field(&cursor);
     char *fix  = next_field(&cursor);
     char *sats = next_field(&cursor);
+    char *hdop = next_field(&cursor);
+    char *alt  = next_field(&cursor);
+    char *alt_units = next_field(&cursor);   // always "M" (meters) per NMEA 0183
 
     gps_state_t tmp;
     xSemaphoreTake(s_mutex, portMAX_DELAY);
@@ -164,13 +167,25 @@ static void handle_gga(char *sentence)
     if (sats && sats[0] != '\0') {
         tmp.sats_in_use = atoi(sats);
     }
+    if (hdop && hdop[0] != '\0') {
+        tmp.hdop = strtof(hdop, NULL);
+        tmp.hdop_valid = true;
+    }
+    // alt_units is always "M" per spec -- not checked, just consumed so a
+    // future field doesn't shift out from under next_field() by accident.
+    (void)alt_units;
+    if (alt && alt[0] != '\0') {
+        tmp.altitude_m = strtof(alt, NULL);
+        tmp.altitude_valid = true;
+    }
 
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     s_state = tmp;
     xSemaphoreGive(s_mutex);
 
-    ESP_LOGI(TAG, "GGA fix=%d sats=%d lat=%.5f lon=%.5f",
-             tmp.gga_fix, tmp.sats_in_use, tmp.latitude_deg, tmp.longitude_deg);
+    ESP_LOGI(TAG, "GGA fix=%d sats=%d lat=%.5f lon=%.5f hdop=%.1f alt=%.1fm",
+             tmp.gga_fix, tmp.sats_in_use, tmp.latitude_deg, tmp.longitude_deg,
+             tmp.hdop, tmp.altitude_m);
 }
 
 static void handle_rmc(char *sentence)
