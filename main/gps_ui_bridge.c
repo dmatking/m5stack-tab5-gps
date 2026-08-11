@@ -64,6 +64,105 @@ static float hdop_to_accuracy_ft(float hdop)
 // dependency for one constant used in exactly one place here too).
 static const double GPS_UI_PI = 3.14159265358979323846;
 
+// ---- US Central time (America/Chicago) --------------------------------
+// This project's users are all in one place (Fort Worth, TX), so a real
+// IANA tzdata dependency for one hardcoded timezone would be a lot of
+// weight for not much -- these are the actual current US DST rules
+// (Energy Policy Act of 2005, in effect since 2007): starts 2nd Sunday of
+// March at 2:00 AM standard time (08:00 UTC), ends 1st Sunday of November
+// at 2:00 AM daylight time (07:00 UTC). Not relying on newlib's
+// timegm()/mktime() either -- worked out by hand instead, using Howard
+// Hinnant's well-known days_from_civil()/civil_from_days() algorithms
+// (public domain, widely used in chrono-compatible libraries). Verified
+// against Python's datetime/zoneinfo before trusting this on real
+// hardware: a 2000-case days_from_civil<->civil_from_days round-trip, the
+// 2nd-Sunday-of-March/1st-Sunday-of-November transition day for 8 separate
+// years, and the exact "spring forward" 2am->3am skip / "fall back"
+// 1am-repeats-twice instants -- all matched.
+
+// Days since 1970-01-01 for a proleptic-Gregorian civil date.
+static long days_from_civil(int y, int m, int d)
+{
+    y -= (m <= 2);
+    long era = (y >= 0 ? y : y - 399) / 400;
+    unsigned yoe = (unsigned)(y - era * 400);
+    unsigned doy = (153 * (unsigned)(m + (m > 2 ? -3 : 9)) + 2) / 5 + (unsigned)d - 1;
+    unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097L + (long)doe - 719468L;
+}
+
+// Inverse of days_from_civil() -- also Hinnant's algorithm.
+static void civil_from_days(long z, int *out_y, int *out_m, int *out_d)
+{
+    z += 719468L;
+    long era = (z >= 0 ? z : z - 146096L) / 146097L;
+    unsigned long doe = (unsigned long)(z - era * 146097L);
+    unsigned long yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    long y = (long)yoe + era * 400;
+    unsigned long doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    unsigned long mp = (5 * doy + 2) / 153;
+    unsigned long d = doy - (153 * mp + 2) / 5 + 1;
+    unsigned long m = mp + (mp < 10 ? 3 : (unsigned long)-9);
+    y += (m <= 2);
+    *out_y = (int)y;
+    *out_m = (int)m;
+    *out_d = (int)d;
+}
+
+// Day-of-month (1-31) of the nth (1-based) Sunday in the given month/year.
+static int nth_sunday_of_month(int year, int month, int nth)
+{
+    long d1 = days_from_civil(year, month, 1);
+    // 1970-01-01 was a Thursday; this remaps to Sunday=0..Saturday=6.
+    int wd1 = (int)(((d1 % 7) + 11) % 7);
+    int first_sunday = 1 + (7 - wd1) % 7;
+    return first_sunday + 7 * (nth - 1);
+}
+
+// True if the given UTC instant falls within US Central daylight time.
+static bool us_central_is_dst(int year, int month, int day, int hour)
+{
+    if (month > 3 && month < 11) return true;
+    if (month < 3 || month > 11) return false;
+    if (month == 3) {
+        int start_day = nth_sunday_of_month(year, 3, 2);
+        return day > start_day || (day == start_day && hour >= 8);
+    }
+    int end_day = nth_sunday_of_month(year, 11, 1);
+    return day < end_day || (day == end_day && hour < 7);
+}
+
+// Converts a UTC broken-down time to US Central, handling date rollover
+// (midnight-crossing, and the DST-transition hour skip/repeat) correctly --
+// not just a naive hour subtraction. out_abbrev is always a static string
+// literal ("CDT"/"CST"), safe for the caller to just hold onto the pointer.
+static void us_central_from_utc(const struct tm *utc, struct tm *out_local,
+                                 const char **out_abbrev)
+{
+    int year = utc->tm_year + 1900, month = utc->tm_mon + 1, day = utc->tm_mday;
+    bool dst = us_central_is_dst(year, month, day, utc->tm_hour);
+    int offset_hours = dst ? -5 : -6;
+    *out_abbrev = dst ? "CDT" : "CST";
+
+    long days = days_from_civil(year, month, day);
+    long total_s = days * 86400L + utc->tm_hour * 3600L + utc->tm_min * 60L + utc->tm_sec;
+    total_s += (long)offset_hours * 3600L;
+
+    long local_days = total_s / 86400L;
+    long rem = total_s % 86400L;
+    if (rem < 0) { rem += 86400L; local_days -= 1; }
+
+    out_local->tm_hour = (int)(rem / 3600L);
+    out_local->tm_min  = (int)((rem % 3600L) / 60L);
+    out_local->tm_sec  = (int)(rem % 60L);
+
+    int ly, lm, ld;
+    civil_from_days(local_days, &ly, &lm, &ld);
+    out_local->tm_year = ly - 1900;
+    out_local->tm_mon  = lm - 1;
+    out_local->tm_mday = ld;
+}
+
 // Great-circle distance between two WGS84 points, in miles. Used by the
 // Telemetry trip accumulator below -- nothing else in this file needs it.
 static float haversine_miles(double lat1, double lon1, double lat2, double lon2)
@@ -116,13 +215,20 @@ static void tick(void)
     ui_status_set_fix(&h->status, fix ? "GPS FIX" : "NO FIX", fix);
     ui_status_set_sats(&h->status, st.sats_in_use, st.hdop_valid ? st.hdop : 0.0f);
 
-    // No RTC/timezone handling in this project -- shown as UTC, not local
-    // time, even though the mockup's status-bar clock implies local ("10:24
-    // AM"). Real UTC beats a frozen demo string more than it beats being
-    // technically mislabeled.
-    if (st.time_valid) {
+    // US Central time, not UTC -- this project's users are all in one
+    // place, so showing raw UTC (technically simpler, but requires doing
+    // timezone arithmetic in your head every time you glance at the clock)
+    // lost out to showing the real local time. Needs both time AND date
+    // (to know which DST rule applies and to handle midnight rollover),
+    // so this waits for both rather than showing anything UTC-based as a
+    // fallback -- see us_central_from_utc() above.
+    bool have_local = st.time_valid && st.date_valid;
+    struct tm local_tm;
+    const char *tz_abbrev = NULL;
+    if (have_local) {
+        us_central_from_utc(&st.utc_tm, &local_tm, &tz_abbrev);
         char clock_buf[16];
-        snprintf(clock_buf, sizeof(clock_buf), "%02d:%02d UTC", st.utc_tm.tm_hour, st.utc_tm.tm_min);
+        snprintf(clock_buf, sizeof(clock_buf), "%02d:%02d %s", local_tm.tm_hour, local_tm.tm_min, tz_abbrev);
         ui_status_set_clock(&h->status, clock_buf);
     }
 
@@ -156,22 +262,17 @@ static void tick(void)
                                                    : "Poor";
     ui_home_set_satellites(h, st.sats_in_use, sat_quality);
 
-    if (st.time_valid || st.date_valid) {
-        char hms_buf[16] = {0};
-        char date_buf[32] = {0};
+    if (have_local) {
         static const char *months[12] = {
             "Jan", "Feb", "Mar", "Apr", "May", "Jun",
             "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
         };
-        if (st.time_valid) {
-            snprintf(hms_buf, sizeof(hms_buf), "%02d:%02d:%02d",
-                     st.utc_tm.tm_hour, st.utc_tm.tm_min, st.utc_tm.tm_sec);
-        }
-        if (st.date_valid && st.utc_tm.tm_mon >= 0 && st.utc_tm.tm_mon < 12) {
-            snprintf(date_buf, sizeof(date_buf), "%s %d, %d",
-                     months[st.utc_tm.tm_mon], st.utc_tm.tm_mday, st.utc_tm.tm_year + 1900);
-        }
-        ui_home_set_utc(h, st.time_valid ? hms_buf : NULL, st.date_valid ? date_buf : NULL);
+        char hms_buf[16], date_buf[32];
+        snprintf(hms_buf, sizeof(hms_buf), "%02d:%02d:%02d",
+                 local_tm.tm_hour, local_tm.tm_min, local_tm.tm_sec);
+        snprintf(date_buf, sizeof(date_buf), "%s %d, %d",
+                 months[local_tm.tm_mon], local_tm.tm_mday, local_tm.tm_year + 1900);
+        ui_home_set_local_time(h, hms_buf, date_buf, tz_abbrev);
     }
 
     // Deliberately not touched: Home's own trip widget (needs avg-speed and
@@ -187,9 +288,9 @@ static void tick(void)
     if (t) {
         ui_status_set_fix(&t->status, fix ? "GPS FIX" : "NO FIX", fix);
         ui_status_set_sats(&t->status, st.sats_in_use, st.hdop_valid ? st.hdop : 0.0f);
-        if (st.time_valid) {
+        if (have_local) {
             char clock_buf[16];
-            snprintf(clock_buf, sizeof(clock_buf), "%02d:%02d UTC", st.utc_tm.tm_hour, st.utc_tm.tm_min);
+            snprintf(clock_buf, sizeof(clock_buf), "%02d:%02d %s", local_tm.tm_hour, local_tm.tm_min, tz_abbrev);
             ui_status_set_clock(&t->status, clock_buf);
         }
 
@@ -249,15 +350,16 @@ static void tick(void)
                                      st.hdop, hdop_to_accuracy_ft(st.hdop));
         }
 
-        // Same UTC-not-local tradeoff as Home's clock, above -- feeding the
-        // real UTC time into both fields rather than mislabeling it, or
-        // showing a frozen "10:24 AM local" demo string. Revisit if this
-        // project ever gets a timezone setting.
-        if (st.time_valid) {
-            char hms_buf[16];
-            snprintf(hms_buf, sizeof(hms_buf), "%02d:%02d:%02d",
+        // Unlike Home's single (now Central) clock, Telemetry has room for
+        // both a real LOCAL (Central) and a real UTC card side by side --
+        // no UTC-vs-local tradeoff to make here, just show both for real.
+        if (have_local) {
+            char local_buf[16], utc_buf[16];
+            snprintf(local_buf, sizeof(local_buf), "%02d:%02d:%02d",
+                     local_tm.tm_hour, local_tm.tm_min, local_tm.tm_sec);
+            snprintf(utc_buf, sizeof(utc_buf), "%02d:%02d:%02d",
                      st.utc_tm.tm_hour, st.utc_tm.tm_min, st.utc_tm.tm_sec);
-            ui_telemetry_set_time(t, hms_buf, hms_buf);
+            ui_telemetry_set_time(t, local_buf, utc_buf, tz_abbrev);
         }
 
         uint32_t moving_s = (uint32_t)(s_moving_ticks * (TICK_PERIOD_MS / 1000.0f));

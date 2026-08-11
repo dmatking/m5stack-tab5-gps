@@ -16,7 +16,7 @@ typedef struct {
 
     lv_obj_t *pos_line1;      /* 32° 54.1234' N   */
     lv_obj_t *pos_line2;      /* 097° 19.5678' W  */
-    lv_obj_t *pos_acc;        /* ± 9.4 ft         */
+    lv_obj_t *pos_acc;        /* +/- 9.4 ft       */
     lv_obj_t *pos_alt;        /* 1,248 ft         */
 
     lv_obj_t *speed;
@@ -29,6 +29,7 @@ typedef struct {
     lv_obj_t *sat_bars[4];
     lv_obj_t *acc_val;
     lv_obj_t *acc_quality;
+    lv_obj_t *time_caption;   /* "TIME (CDT)"/"TIME (CST)" -- see ui_home_set_local_time() */
     lv_obj_t *utc_time;
     lv_obj_t *utc_date;
 
@@ -53,7 +54,13 @@ void ui_home_set_speed(ui_home_t *h, float mph);
 void ui_home_set_heading(ui_home_t *h, int deg, const char *cardinal);
 void ui_home_set_altitude(ui_home_t *h, int feet);
 void ui_home_set_satellites(ui_home_t *h, int count, const char *quality);
-void ui_home_set_utc(ui_home_t *h, const char *hms, const char *date);
+// Despite the original design's card being captioned "TIME (UTC)", this
+// project's users are all in one place (Fort Worth, TX) and want to read
+// local time at a glance, not do UTC arithmetic in their head -- feeds
+// US Central time (see gps_ui_bridge.c's us_central_from_utc()), and
+// updates the card's own caption to say which one (CDT/CST) is currently
+// in effect, since that flips twice a year.
+void ui_home_set_local_time(ui_home_t *h, const char *hms, const char *date, const char *tz_abbrev);
 void ui_home_set_trip(ui_home_t *h, float distance_mi, const char *moving,
                       float avg_mph, float max_mph, int gain_ft);
 void ui_home_set_tracking(ui_home_t *h, bool on);

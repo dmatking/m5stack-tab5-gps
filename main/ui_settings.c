@@ -142,7 +142,9 @@ ui_settings_t *ui_settings_create(lv_event_cb_t tab_cb)
 
     /* logging -------------------------------------------------------------- */
     lv_obj_t *g4 = group(body, "LOGGING & STORAGE");
-    row_value(g4, "Track log", "Recording \xC2\xB7 5 s", UI_C_GREEN,
+    // "|" not "\xC2\xB7" (·) below -- see ui_home.c's ± comment; same
+    // missing-glyph issue, different character, same fix.
+    row_value(g4, "Track log", "Recording | 5 s", UI_C_GREEN,
               UI_SET_TRACK_LOG, &s->value[UI_SET_TRACK_LOG]);
     ui_divider(g4);
     lv_obj_t *sd = row_base(g4, "SD card");
@@ -153,7 +155,7 @@ ui_settings_t *ui_settings_create(lv_event_cb_t tab_cb)
     lv_obj_set_flex_grow(spacer, 1);
 
     s->footer = ui_label(body,
-        "Tab5 \xC2\xB7 FW 1.4.2 \xC2\xB7 SN 0A31-7742\nu-blox M10 \xC2\xB7 uptime 21:44",
+        "Tab5 | FW 1.4.2 | SN 0A31-7742\nu-blox M10 | uptime 21:44",
         ui_font.xs, UI_C_DIM);
 
     ui_navbar_create(scr, UI_TAB_MORE, tab_cb);

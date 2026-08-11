@@ -207,7 +207,9 @@ ui_goto_t *ui_goto_create(lv_event_cb_t tab_cb)
     lv_obj_set_size(rtext, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     ui_flex_col(rtext, 2);
     g->recent_name = ui_label(rtext, "Gemini Bridges", ui_font.semi_s, UI_C_TEXT);
-    g->recent_meta = ui_label(rtext, "last used \xC2\xB7 6.4 mi \xC2\xB7 094\xC2\xB0",
+    // "|" not "\xC2\xB7" (·) -- see ui_home.c's ± comment; same missing-
+    // glyph issue, different character, same fix (ASCII substitute).
+    g->recent_meta = ui_label(rtext, "last used | 6.4 mi | 094\xC2\xB0",
                               ui_font.xs, UI_C_MUTED);
     ui_label(rec, "Load " LV_SYMBOL_RIGHT, ui_font.s, UI_C_BLUE);
 
@@ -268,7 +270,7 @@ void ui_goto_set_recent(ui_goto_t *g, const char *name, float dist_mi, int brg)
 {
     if (!g) return;
     if (name) lv_label_set_text(g->recent_name, name);
-    lv_label_set_text_fmt(g->recent_meta, "last used \xC2\xB7 %.1f mi \xC2\xB7 %03d\xC2\xB0",
+    lv_label_set_text_fmt(g->recent_meta, "last used | %.1f mi | %03d\xC2\xB0",
                           dist_mi, ((brg % 360) + 360) % 360);
 }
 

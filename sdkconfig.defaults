@@ -89,3 +89,23 @@ CONFIG_LV_LOG_PRINTF=y
 # transparently spills anything past CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL
 # into PSRAM, same as any other large ESP-IDF allocation in this project.
 CONFIG_LV_USE_CLIB_MALLOC=y
+
+# LV_USE_FLOAT was off by default (it only gates lv_value_precise_t's
+# internal representation, not anything this app touches directly) -- but
+# it ALSO controls whether LVGL's own builtin sprintf (lv_sprintf_builtin.c,
+# CONFIG_LV_USE_BUILTIN_SPRINTF above) compiles in its "%f" case at all:
+# PRINTF_DISABLE_SUPPORT_FLOAT is literally #defined as (!LV_USE_FLOAT).
+# With it off, "%f"/"%.Nf" in any lv_label_set_text_fmt() call fell through
+# with NO case at all -- confirmed on real hardware that this doesn't
+# crash, it just emits the literal trailing 'f' character and, critically,
+# never consumes the float argument from the va_list, silently misaligning
+# every argument after it in the same call. This is the real root cause
+# behind two things found the hard way this project: labels showing a bare
+# "f" instead of a number (HDOP/trip/accuracy on the Telemetry screen), and
+# an earlier hardware-confirmed crash in ui_nav.c/ui_map.c where a %f
+# was followed by a %s in the same call (the %s read the wrong, misaligned
+# va_arg slot -- a garbage pointer, not just a garbage number). Those two
+# call sites already work around it by formatting the float into its own
+# buffer first, and are left that way (harmless, no reason to unwind), but
+# this is the actual fix -- every OTHER %f call across the UI needed it too.
+CONFIG_LV_USE_FLOAT=y

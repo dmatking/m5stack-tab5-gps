@@ -90,7 +90,12 @@ ui_home_t *ui_home_create(lv_event_cb_t tab_cb)
     ui_flex_row(pos_sub, 20);
     lv_obj_set_flex_align(pos_sub, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
-    h->pos_acc = ui_label(pos_sub, LV_SYMBOL_WARNING " \xC2\xB1 9.4 ft", ui_font.s, UI_C_MUTED);
+    // "+/-" not "\xC2\xB1" (±) -- LVGL's built-in Montserrat fonts only
+    // include ASCII plus the degree sign, nothing else outside that; ± (and
+    // every other non-ASCII punctuation this design used) rendered as a
+    // tofu box on real hardware. Confirmed via a real ± usage elsewhere in
+    // this same file/other UI files (photographed on the actual panel).
+    h->pos_acc = ui_label(pos_sub, LV_SYMBOL_WARNING " +/- 9.4 ft", ui_font.s, UI_C_MUTED);
     lv_obj_t *bar = ui_box(pos_sub);
     lv_obj_set_size(bar, 1, 24);
     lv_obj_set_style_bg_color(bar, UI_C_BORDER, 0);
@@ -155,7 +160,7 @@ ui_home_t *ui_home_create(lv_event_cb_t tab_cb)
                           LV_FLEX_ALIGN_CENTER);
     ui_caption(acc, "GPS ACCURACY");
     ui_label(acc, LV_SYMBOL_GPS, ui_font.semi_m, UI_C_GREEN);
-    h->acc_val     = ui_label(acc, "\xC2\xB1 9.4 ft", ui_font.num_m, UI_C_TEXT);
+    h->acc_val     = ui_label(acc, "+/- 9.4 ft", ui_font.num_m, UI_C_TEXT);
     h->acc_quality = ui_label(acc, "Good", ui_font.s, UI_C_MUTED);
 
     lv_obj_t *utc = ui_card(row2);
@@ -164,7 +169,11 @@ ui_home_t *ui_home_create(lv_event_cb_t tab_cb)
     ui_flex_col(utc, 8);
     lv_obj_set_flex_align(utc, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
-    ui_caption(utc, "TIME (UTC)");
+    // Demo caption says CDT (matching the demo "10:24 AM"-ish daytime
+    // scenario the mockup implies) -- ui_home_set_local_time() below keeps
+    // it in sync with whichever of CDT/CST is actually in effect once real
+    // data arrives.
+    h->time_caption = ui_caption(utc, "TIME (CDT)");
     ui_label(utc, LV_SYMBOL_REFRESH, ui_font.semi_m, UI_C_GREEN);
     h->utc_time = ui_label(utc, "15:24:18", ui_font.semi_l, UI_C_TEXT);
     h->utc_date = ui_label(utc, "May 26, 2025", ui_font.s, UI_C_MUTED);
@@ -214,8 +223,8 @@ void ui_home_set_position(ui_home_t *h, const char *lat, const char *lon)
 void ui_home_set_accuracy(ui_home_t *h, float feet)
 {
     if (!h) return;
-    lv_label_set_text_fmt(h->pos_acc, "\xC2\xB1 %.1f ft", feet);
-    lv_label_set_text_fmt(h->acc_val, "\xC2\xB1 %.1f ft", feet);
+    lv_label_set_text_fmt(h->pos_acc, "+/- %.1f ft", feet);
+    lv_label_set_text_fmt(h->acc_val, "+/- %.1f ft", feet);
     const char *q = feet <= 16.0f ? "Good" : (feet <= 40.0f ? "Fair" : "Poor");
     lv_label_set_text(h->acc_quality, q);
     lv_obj_set_style_text_color(h->acc_quality,
@@ -251,11 +260,12 @@ void ui_home_set_satellites(ui_home_t *h, int count, const char *quality)
     }
 }
 
-void ui_home_set_utc(ui_home_t *h, const char *hms, const char *date)
+void ui_home_set_local_time(ui_home_t *h, const char *hms, const char *date, const char *tz_abbrev)
 {
     if (!h) return;
-    if (hms)  lv_label_set_text(h->utc_time, hms);
-    if (date) lv_label_set_text(h->utc_date, date);
+    if (hms)       lv_label_set_text(h->utc_time, hms);
+    if (date)      lv_label_set_text(h->utc_date, date);
+    if (tz_abbrev) lv_label_set_text_fmt(h->time_caption, "TIME (%s)", tz_abbrev);
 }
 
 void ui_home_set_trip(ui_home_t *h, float distance_mi, const char *moving,

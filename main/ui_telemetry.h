@@ -30,6 +30,7 @@ typedef struct {
     lv_obj_t *hdop;
     lv_obj_t *accuracy;
 
+    lv_obj_t *local_caption;  /* "LOCAL | CDT" / "LOCAL | CST" -- see ui_telemetry_set_time() */
     lv_obj_t *local_time;
     lv_obj_t *utc_time;
 
@@ -52,7 +53,11 @@ void ui_telemetry_set_position(ui_telemetry_t *t, const char *ddm_lat,
 void ui_telemetry_set_altitude(ui_telemetry_t *t, int feet, int fpm);
 void ui_telemetry_set_quality(ui_telemetry_t *t, int used, int visible,
                               float hdop, float accuracy_ft);
-void ui_telemetry_set_time(ui_telemetry_t *t, const char *local, const char *utc);
+// tz_abbrev updates the LOCAL card's own caption ("LOCAL | CDT"/"LOCAL |
+// CST") -- see gps_ui_bridge.c's us_central_from_utc(), which flips it
+// twice a year along with the actual UTC offset it applies.
+void ui_telemetry_set_time(ui_telemetry_t *t, const char *local, const char *utc,
+                           const char *tz_abbrev);
 void ui_telemetry_set_trip(ui_telemetry_t *t, float miles, float max_mph,
                            const char *moving);
 /* snr[]: 0-99 dB-Hz per satellite; n <= UI_TELEM_BARS. */

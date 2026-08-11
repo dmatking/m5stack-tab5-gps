@@ -179,7 +179,9 @@ ui_map_t *ui_map_create(lv_event_cb_t tab_cb)
     lv_obj_set_flex_align(dright, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END,
                           LV_FLEX_ALIGN_END);
     m->dest_dist = ui_label(dright, "6.4 mi", ui_font.semi_l, UI_C_BLUE);
-    m->dest_sub  = ui_label(dright, "brg 094\xC2\xB0 \xC2\xB7 ETA 14:50",
+    // "|" not "\xC2\xB7" (·) -- see ui_home.c's ± comment; same missing-
+    // glyph issue, different character, same fix (ASCII substitute).
+    m->dest_sub  = ui_label(dright, "brg 094\xC2\xB0 | ETA 14:50",
                             ui_font.xs, UI_C_MUTED);
 
     lv_obj_t *keys = ui_box(map);
@@ -200,7 +202,7 @@ ui_map_t *ui_map_create(lv_event_cb_t tab_cb)
     lv_obj_t *ileft = ui_box(info);
     lv_obj_set_size(ileft, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     ui_flex_col(ileft, 8);
-    m->coords = ui_label(ileft, "32\xC2\xB0 54.1234' N \xC2\xB7 097\xC2\xB0 19.5678' W",
+    m->coords = ui_label(ileft, "32\xC2\xB0 54.1234' N | 097\xC2\xB0 19.5678' W",
                          ui_font.semi_s, UI_C_TEXT);
     lv_obj_t *scale_row = ui_box(ileft);
     lv_obj_set_size(scale_row, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
@@ -221,7 +223,7 @@ ui_map_t *ui_map_create(lv_event_cb_t tab_cb)
     lv_obj_set_flex_align(iright, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END,
                           LV_FLEX_ALIGN_END);
     m->zoom_label = ui_label(iright, "zoom 14", ui_font.xs, UI_C_MUTED);
-    m->fix_label  = ui_label(iright, "3D fix \xC2\xB7 \xC2\xB1 9.4 ft", ui_font.xs, UI_C_GREEN);
+    m->fix_label  = ui_label(iright, "3D fix | +/- 9.4 ft", ui_font.xs, UI_C_GREEN);
 
     ui_navbar_create(scr, UI_TAB_MAP, tab_cb);
 
@@ -240,7 +242,7 @@ ui_map_t *ui_map_create(lv_event_cb_t tab_cb)
 void ui_map_set_position(ui_map_t *m, const char *lat, const char *lon)
 {
     if (!m) return;
-    lv_label_set_text_fmt(m->coords, "%s \xC2\xB7 %s", lat, lon);
+    lv_label_set_text_fmt(m->coords, "%s | %s", lat, lon);
 }
 
 void ui_map_set_own_marker(ui_map_t *m, lv_coord_t x, lv_coord_t y)
@@ -259,11 +261,13 @@ void ui_map_set_destination(ui_map_t *m, const char *name, float dist_mi,
     // Numeric spec formatted separately from the %s -- see the comment on
     // the equivalent fix in ui_nav.c's ui_nav_set_cross_track() for why
     // (a confirmed real crash mixing a float spec with %s in the same
-    // lv_label_set_text_fmt() call; this one hadn't been exercised yet
-    // but is the same risk shape, not worth waiting to find out).
+    // lv_label_set_text_fmt() call, root-caused since to CONFIG_LV_USE_FLOAT
+    // being off -- see sdkconfig.defaults). This one hadn't been exercised
+    // yet when the defensive split was added; left as-is now that the root
+    // cause is fixed too, same reasoning as ui_nav.c's version.
     char brg_buf[8];
     snprintf(brg_buf, sizeof(brg_buf), "%03d", bearing_deg);
-    lv_label_set_text_fmt(m->dest_sub, "brg %s\xC2\xB0 \xC2\xB7 ETA %s",
+    lv_label_set_text_fmt(m->dest_sub, "brg %s\xC2\xB0 | ETA %s",
                           brg_buf, eta ? eta : "--:--");
 }
 

@@ -179,7 +179,9 @@ ui_nav_t *ui_nav_create(lv_event_cb_t tab_cb)
     lv_obj_set_flex_align(xhead, LV_FLEX_ALIGN_SPACE_BETWEEN,
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     ui_caption(xhead, "CROSS TRACK");
-    n->xtk_label = ui_label(xhead, "0.12 mi left \xC2\xB7 closing", ui_font.xs, UI_C_GREEN);
+    // "|" not "\xC2\xB7" (·) -- see ui_home.c's ± comment; same missing-
+    // glyph issue, different character, same fix (ASCII substitute).
+    n->xtk_label = ui_label(xhead, "0.12 mi left | closing", ui_font.xs, UI_C_GREEN);
 
     lv_obj_t *rail = ui_box(xtk);
     lv_obj_set_size(rail, LV_PCT(100), 24);
@@ -337,12 +339,16 @@ void ui_nav_set_cross_track(ui_nav_t *n, float offset_mi, bool closing)
     // in the same lv_label_set_text_fmt() call corrupts the later %s
     // pointers (crashed inside LVGL's builtin lv_vsnprintf_inner ->
     // lv_strnlen on a garbage ~0xe0000000 address, addr2line-confirmed).
-    // Root cause not fully nailed down -- possibly a float/pointer va_arg
-    // extraction mismatch specific to this RISC-V toolchain's variadic ABI
-    // -- but avoiding the mix entirely sidesteps it regardless of cause.
+    // Root cause since confirmed (see sdkconfig.defaults' CONFIG_LV_USE_FLOAT
+    // comment): CONFIG_LV_USE_FLOAT was off, which compiles the entire "%f"
+    // case out of LVGL's builtin sprintf -- the float argument never got
+    // consumed from the va_list at all, so the %s right after it read the
+    // wrong (garbage-pointer) slot. Now fixed at the root for every OTHER
+    // %f call in the UI; this one's left exactly as-is since it's harmless
+    // and already proven correct, not worth unwinding for its own sake.
     char mag_buf[16];
     snprintf(mag_buf, sizeof(mag_buf), "%.2f", mag);
-    lv_label_set_text_fmt(n->xtk_label, "%s mi %s \xC2\xB7 %s", mag_buf,
+    lv_label_set_text_fmt(n->xtk_label, "%s mi %s | %s", mag_buf,
                           offset_mi < 0 ? "left" : "right",
                           closing ? "closing" : "opening");
     lv_obj_set_style_text_color(n->xtk_label, closing ? UI_C_GREEN : UI_C_RED, 0);
