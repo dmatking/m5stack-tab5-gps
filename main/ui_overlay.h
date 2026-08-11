@@ -36,20 +36,17 @@ void ui_overlay_draw_home_button(bool follow_active);
 bool ui_overlay_hit_test_home(int16_t x, int16_t y);
 
 // Draw the tab navbar across the bottom MAP_NAVBAR_H rows of the logical
-// screen -- a native (PPA fill + Terminus-font text) mirror of main/
-// ui_common.c's real LVGL navbar, so the Map screen's chrome matches the
-// rest of the app. active_tab is the currently-highlighted tab, using the
-// same 0..4 ordering as main/ui_common.h's ui_tab_t (0=Home, 1=Map,
-// 2=Nav, 3=Telemetry, 4=More) -- kept as a plain int rather than that
-// (LVGL-typed) enum so this native-only file doesn't need to pull in
-// design_ui.h/ui_common.h; keep the two orderings in sync by hand if
-// ui_tab_t's tab set ever changes. Same call-site contract as
-// ui_overlay_draw_zoom_buttons().
-void ui_overlay_draw_navbar(int active_tab);
+// screen -- blits a real, LVGL-rendered snapshot (see navbar_snapshot.h)
+// rather than rendering anything itself; Map is always the active tab
+// here, so there's only ever one frame of this to show. Same call-site
+// contract as ui_overlay_draw_zoom_buttons().
+void ui_overlay_draw_navbar(void);
 
 // Hit-test a touch point against the navbar. Returns true and sets
-// *tab_out (same 0..4 ordering as ui_overlay_draw_navbar()'s active_tab)
-// if (x,y) falls inside the navbar's rows at all -- every touch down there
-// resolves to *some* tab, same "swallow the whole strip" convention as the
-// zoom/home buttons.
+// *tab_out to which of the 5 tabs (0=Home, 1=Map, 2=Nav, 3=Telemetry,
+// 4=More -- same ordering as main/ui_common.h's ui_tab_t, kept as a plain
+// int rather than that LVGL-typed enum so this native-only file doesn't
+// need to pull in design_ui.h/ui_common.h) if (x,y) falls inside the
+// navbar's rows at all -- every touch down there resolves to *some* tab,
+// same "swallow the whole strip" convention as the zoom/home buttons.
 bool ui_overlay_hit_test_navbar(int16_t x, int16_t y, int *tab_out);

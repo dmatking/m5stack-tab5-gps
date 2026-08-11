@@ -363,7 +363,7 @@ static void map_task(void *arg)
             ui_overlay_draw_zoom_buttons();
             ui_overlay_draw_home_button(follow_gps);
             ui_overlay_draw_gps_status(zoom);
-            ui_overlay_draw_navbar(1); // 1 == Map -- always the active tab on this screen
+            ui_overlay_draw_navbar(); // blits a captured snapshot -- Map is always the active tab here
             board_lcd_commit();
 
             if (last_redraw_us >= 0) {

@@ -109,3 +109,14 @@ CONFIG_LV_USE_CLIB_MALLOC=y
 # buffer first, and are left that way (harmless, no reason to unwind), but
 # this is the actual fix -- every OTHER %f call across the UI needed it too.
 CONFIG_LV_USE_FLOAT=y
+
+# Used once, at boot, to render the real ui_common.c navbar off-screen and
+# capture its pixels (main/navbar_snapshot.c) -- the Map screen then just
+# blits that captured bitmap instead of re-implementing font/icon
+# rendering natively. A from-scratch attempt at the latter (calling
+# LVGL's own glyph-bitmap API directly from the native, LVGL-stopped
+# render path) shipped once, crashed on real hardware, and was reverted --
+# lv_snapshot_take() runs through LVGL's normal, already-proven render
+# pipeline while LVGL is still fully up, which is a lot less to get wrong
+# than reaching into font internals from outside it.
+CONFIG_LV_USE_SNAPSHOT=y

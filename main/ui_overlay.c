@@ -13,6 +13,7 @@
 #include "font_terminus24.h"
 #include "gps.h"
 #include "map_config.h"
+#include "navbar_snapshot.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -304,167 +305,46 @@ bool ui_overlay_hit_test_home(int16_t x, int16_t y)
 }
 
 // ---------------------------------------------------------------------------
-// Tab navbar -- native mirror of main/ui_common.c's real LVGL navbar (see
-// ui_overlay.h's doc comment for why a native version exists at all: the Map
-// screen doesn't run LVGL). Same 5-tab set/order/palette, including a small
-// icon above each label -- the Terminus font used for the labels is text-
-// only, so the icons are hand-drawn shapes (per-pixel tests / filled rects,
-// same conventions as the home/locate button's ring+dot+ticks above) rather
-// than real glyphs. Not trying to reproduce ui_common.c's specific stock
-// LVGL symbols pixel-for-pixel -- just a same-idea stand-in per tab, close
-// enough that the two navbars read as the same design.
+// Tab navbar -- blits a real, LVGL-rendered snapshot of main/ui_common.c's
+// navbar (Map tab active, captured once at boot -- see navbar_snapshot.h)
+// instead of re-implementing font/icon rendering natively. An earlier
+// attempt drew the real fonts/icons live, every frame, by calling LVGL's
+// own glyph-bitmap API directly from this native (LVGL-stopped) render
+// path -- more code, more novel risk, and it crashed real hardware. This
+// navbar never actually changes (Map is always the active tab here), so
+// one captured frame is all it ever needs.
 // ---------------------------------------------------------------------------
 
-#define NAVBAR_Y        (MAP_LOGICAL_H - MAP_NAVBAR_H)
-#define NAVBAR_TABS     5
-#define NAVBAR_CELL_W   (MAP_LOGICAL_W / NAVBAR_TABS)
-#define NAVBAR_ICON_H   28  // px, bounding box for the hand-drawn tab icons below
-#define NAVBAR_ICON_GAP 8   // px, gap between icon and label
-#define NAVBAR_IND_W    56  // px, active-tab indicator bar -- matches ui_common.c's
-#define NAVBAR_IND_H    4
-#define NAVBAR_IND_GAP  10  // px, gap between label baseline and indicator bar
+#define NAVBAR_Y (MAP_LOGICAL_H - MAP_NAVBAR_H)
 
-// Must stay in the same order as main/ui_common.h's ui_tab_t (see this
-// file's ui_overlay_draw_navbar()/hit-test doc comments in ui_overlay.h).
-static const char *navbar_tab_text[NAVBAR_TABS] = {
-    "HOME", "MAP", "NAV", "TELEMETRY", "MORE",
-};
-
-// Generic filled upward-pointing triangle, apex at (cx, cy - height/2),
-// base spanning cx-half_w..cx+half_w at the bottom row -- shared by a
-// couple of the tab icons below.
-static void draw_triangle_up(uint8_t *fb, int nat_w, int nat_h, int cx, int cy,
-                              int half_w, int height, uint16_t color)
+void ui_overlay_draw_navbar(void)
 {
-    int top = -(height / 2);
-    for (int dy = 0; dy < height; dy++) {
-        int w = half_w * dy / (height - 1);
-        for (int dx = -w; dx <= w; dx++) {
-            set_logical_pixel(fb, nat_w, nat_h, cx + dx, cy + top + dy, color);
-        }
-    }
-}
+    const uint16_t *snap = navbar_snapshot_get();
+    if (!snap) return; // capture hasn't run (or failed) -- leave the strip alone rather than guess
 
-// HOME -- triangular roof over a square base.
-static void draw_icon_home(uint8_t *fb, int nat_w, int nat_h, int cx, int cy, uint16_t color)
-{
-    int roof_cy = cy - 5;
-    draw_triangle_up(fb, nat_w, nat_h, cx, roof_cy, 11, 12, color);
-    fill_logical_rect(fb, nat_w, nat_h, cx - 8, roof_cy + 6, 16, 9, color);
-}
-
-// MAP -- location pin: filled circle "head" with a triangular point below
-// it, same per-pixel-test convention as draw_ring_and_dot() above.
-static void draw_icon_pin(uint8_t *fb, int nat_w, int nat_h, int cx, int cy, uint16_t color)
-{
-    int r = 7, r2 = r * r;
-    int head_cy = cy - 4;
-    for (int dy = -r; dy <= r; dy++) {
-        for (int dx = -r; dx <= r; dx++) {
-            if (dx * dx + dy * dy <= r2) {
-                set_logical_pixel(fb, nat_w, nat_h, cx + dx, head_cy + dy, color);
-            }
-        }
-    }
-    int tip_len = 9;
-    for (int dy = 0; dy < tip_len; dy++) {
-        int w = r * (tip_len - dy) / tip_len;
-        for (int dx = -w; dx <= w; dx++) {
-            set_logical_pixel(fb, nat_w, nat_h, cx + dx, head_cy + r - 2 + dy, color);
-        }
-    }
-}
-
-// NAV -- a plain arrowhead, same shape family as ui_nav.c's real rotating
-// bearing arrow (this one just always points up -- it's a tab icon, not a
-// live heading indicator).
-static void draw_icon_nav(uint8_t *fb, int nat_w, int nat_h, int cx, int cy, uint16_t color)
-{
-    draw_triangle_up(fb, nat_w, nat_h, cx, cy, 10, 20, color);
-}
-
-// TELEMETRY -- three ascending bars (instrument-panel shorthand).
-static void draw_icon_bars(uint8_t *fb, int nat_w, int nat_h, int cx, int cy, uint16_t color)
-{
-    static const int heights[3] = { 10, 16, 22 };
-    int w = 6, gap = 4;
-    int x0 = cx - (3 * w + 2 * gap) / 2;
-    int base_y = cy + 11; // bottom-align all three bars
-    for (int i = 0; i < 3; i++) {
-        fill_logical_rect(fb, nat_w, nat_h, x0 + i * (w + gap), base_y - heights[i],
-                           w, heights[i], color);
-    }
-}
-
-// MORE -- three stacked horizontal bars (hamburger menu).
-static void draw_icon_more(uint8_t *fb, int nat_w, int nat_h, int cx, int cy, uint16_t color)
-{
-    int w = 20, h = 3, gap = 6;
-    for (int i = -1; i <= 1; i++) {
-        fill_logical_rect(fb, nat_w, nat_h, cx - w / 2, cy + i * gap - h / 2, w, h, color);
-    }
-}
-
-static void draw_navbar_icon(uint8_t *fb, int nat_w, int nat_h, int tab_index,
-                              int cx, int cy, uint16_t color)
-{
-    switch (tab_index) {
-    case 0: draw_icon_home(fb, nat_w, nat_h, cx, cy, color); break;
-    case 1: draw_icon_pin(fb, nat_w, nat_h, cx, cy, color); break;
-    case 2: draw_icon_nav(fb, nat_w, nat_h, cx, cy, color); break;
-    case 3: draw_icon_bars(fb, nat_w, nat_h, cx, cy, color); break;
-    case 4: draw_icon_more(fb, nat_w, nat_h, cx, cy, color); break;
-    default: break;
-    }
-}
-
-void ui_overlay_draw_navbar(int active_tab)
-{
     uint8_t *fb = board_lcd_hw_framebuffer();
     if (!fb) return;
     int nat_w = board_lcd_width();
     int nat_h = board_lcd_height();
 
-    fill_logical_rect(fb, nat_w, nat_h, 0, NAVBAR_Y, MAP_LOGICAL_W, MAP_NAVBAR_H,
-                       MAP_THEME_NAVBAR_RGB565);
-    // 1px top border, matching ui_common.c's LV_BORDER_SIDE_TOP divider.
-    fill_logical_rect(fb, nat_w, nat_h, 0, NAVBAR_Y, MAP_LOGICAL_W, 1,
-                       MAP_THEME_DIVIDER_RGB565);
-
-    // Vertically centers the (icon + gap + label + gap + indicator) block
-    // within the bar.
-    int block_h = NAVBAR_ICON_H + NAVBAR_ICON_GAP + STATUS_CHAR_H + NAVBAR_IND_GAP + NAVBAR_IND_H;
-    int top = NAVBAR_Y + (MAP_NAVBAR_H - block_h) / 2;
-    int label_y = top + NAVBAR_ICON_H + NAVBAR_ICON_GAP;
-
-    for (int i = 0; i < NAVBAR_TABS; i++) {
-        bool on = (i == active_tab);
-        uint16_t color = on ? MAP_THEME_BLUE_RGB565 : MAP_THEME_ICON_RGB565;
-
-        int cell_x0 = i * NAVBAR_CELL_W;
-        int cell_cx = cell_x0 + NAVBAR_CELL_W / 2;
-
-        draw_navbar_icon(fb, nat_w, nat_h, i, cell_cx, top + NAVBAR_ICON_H / 2, color);
-
-        int label_w = (int)strlen(navbar_tab_text[i]) * STATUS_CHAR_W;
-        draw_string_logical(fb, nat_w, nat_h, cell_cx - label_w / 2, label_y,
-                             navbar_tab_text[i], color);
-
-        if (on) {
-            int ind_x = cell_x0 + (NAVBAR_CELL_W - NAVBAR_IND_W) / 2;
-            int ind_y = label_y + STATUS_CHAR_H + NAVBAR_IND_GAP;
-            fill_logical_rect(fb, nat_w, nat_h, ind_x, ind_y, NAVBAR_IND_W, NAVBAR_IND_H,
-                               MAP_THEME_BLUE_RGB565);
-        }
+    // Straight row copy -- navbar_snapshot_get()'s buffer is exactly
+    // MAP_LOGICAL_W wide (== UI_SCREEN_W) with no stride padding, same as
+    // the native framebuffer's own row width, so this is just "copy N full
+    // rows starting at the right offset", not a general blit.
+    for (int row = 0; row < MAP_NAVBAR_H; row++) {
+        int ny = NAVBAR_Y + row;
+        if (ny < 0 || ny >= nat_h) continue;
+        memcpy(&((uint16_t *)fb)[ny * nat_w], &snap[row * MAP_LOGICAL_W],
+               (size_t)MAP_LOGICAL_W * sizeof(uint16_t));
     }
 }
 
 bool ui_overlay_hit_test_navbar(int16_t x, int16_t y, int *tab_out)
 {
     if (y < NAVBAR_Y) return false;
-    int idx = x / NAVBAR_CELL_W;
+    int idx = x / (MAP_LOGICAL_W / 5);
     if (idx < 0) idx = 0;
-    if (idx >= NAVBAR_TABS) idx = NAVBAR_TABS - 1;
+    if (idx > 4) idx = 4;
     *tab_out = idx;
     return true;
 }

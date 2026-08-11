@@ -50,6 +50,7 @@
 
 #include "board_interface.h"
 #include "design_ui.h"
+#include "navbar_snapshot.h"
 #include "map_config.h"
 #include "map_view.h"
 #include "touch.h"
@@ -246,6 +247,13 @@ void ui_shell_start(void)
         // screen do we pay for building the real (heavier) 6-screen UI.
         create_and_load_splash();
         ui_init();
+        // Captures a real, LVGL-rendered copy of the navbar (Map tab
+        // active) for the native Map screen to blit later -- see
+        // navbar_snapshot.h for why this replaced an earlier attempt at
+        // live-rendering real fonts/icons directly from the native path
+        // (it crashed real hardware). Needs a live default display and
+        // ui_theme_init() already done, both true by this point.
+        navbar_snapshot_capture();
         lvgl_port_unlock();
     }
 
