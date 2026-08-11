@@ -306,171 +306,115 @@ bool ui_overlay_hit_test_home(int16_t x, int16_t y)
 // ---------------------------------------------------------------------------
 // Tab navbar -- native mirror of main/ui_common.c's real LVGL navbar (see
 // ui_overlay.h's doc comment for why a native version exists at all: the Map
-// screen doesn't run LVGL). This draws with LVGL's OWN Montserrat font data
-// and OWN stock icon glyphs (LV_SYMBOL_*) -- same font, same icons, as the
-// real navbar -- rather than a hand-drawn stand-in font/icon set. That's
-// safe to do from here despite LVGL being fully stopped while the Map
-// screen owns the panel: lv_font_get_glyph_dsc()/lv_font_get_glyph_bitmap()
-// are pure, thread-safe lookups into the font's own compiled-in static
-// data (confirmed by reading lv_font_fmt_txt.c/lv_font.c directly) -- they
-// don't touch any live display/render/object-tree state the way
-// lv_obj_*/lv_scr_* APIs do, which is what actually requires the LVGL port
-// lock/an active render context. Unlike the rest of this file, this one
-// part genuinely needs "#include lvgl.h" -- see the comment on that below.
-//
-// This project's own Montserrat font builds (checked directly in the
-// compiled main/../managed_components/lvgl__lvgl/src/font/lv_font_montserrat_*.c
-// files' own header comments) are "--no-compress --bpp 4", i.e. every
-// glyph is a flat, tightly-packed stream of 4-bit alpha nibbles (no
-// compression, no per-row byte padding) -- confirmed against
-// lv_font_fmt_txt_dsc.c's own bpp==4 unpacking code and its opa4_table
-// (0,17,34,...255, i.e. just nibble*17). Requesting the "raw" bitmap
-// (glyph_dsc.req_raw_bitmap = 1) hands back a direct pointer to that same
-// packed data with no decompression/scratch-buffer step needed at all.
+// screen doesn't run LVGL). Same 5-tab set/order/palette, including a small
+// icon above each label -- the Terminus font used for the labels is text-
+// only, so the icons are hand-drawn shapes (per-pixel tests / filled rects,
+// same conventions as the home/locate button's ring+dot+ticks above) rather
+// than real glyphs. Not trying to reproduce ui_common.c's specific stock
+// LVGL symbols pixel-for-pixel -- just a same-idea stand-in per tab, close
+// enough that the two navbars read as the same design.
 // ---------------------------------------------------------------------------
-
-#include "lvgl.h"
 
 #define NAVBAR_Y        (MAP_LOGICAL_H - MAP_NAVBAR_H)
 #define NAVBAR_TABS     5
-#define NAVBAR_ICON_GAP 6   // px, gap between icon and label
+#define NAVBAR_CELL_W   (MAP_LOGICAL_W / NAVBAR_TABS)
+#define NAVBAR_ICON_H   28  // px, bounding box for the hand-drawn tab icons below
+#define NAVBAR_ICON_GAP 8   // px, gap between icon and label
 #define NAVBAR_IND_W    56  // px, active-tab indicator bar -- matches ui_common.c's
 #define NAVBAR_IND_H    4
-#define NAVBAR_IND_GAP  8   // px, gap between label and indicator bar
-#define NAVBAR_CELL_W   (MAP_LOGICAL_W / NAVBAR_TABS)
-
-// Same fonts ui_theme.c falls back to for ui_font.m (icons) / ui_font.xs
-// (labels) when UI_USE_CUSTOM_FONTS is off, which it is in this build --
-// see that file. Referenced directly rather than via ui_font (this file
-// deliberately doesn't include ui_theme.h/pull in the rest of the LVGL
-// widget layer, just the font subsystem).
-#define NAVBAR_ICON_FONT  (&lv_font_montserrat_28)
-#define NAVBAR_LABEL_FONT (&lv_font_montserrat_20)
+#define NAVBAR_IND_GAP  10  // px, gap between label baseline and indicator bar
 
 // Must stay in the same order as main/ui_common.h's ui_tab_t (see this
 // file's ui_overlay_draw_navbar()/hit-test doc comments in ui_overlay.h).
-// Exactly ui_common.c's own tab_icon[]/tab_text[] arrays.
-static const char *navbar_tab_icon[NAVBAR_TABS] = {
-    LV_SYMBOL_HOME, LV_SYMBOL_IMAGE, LV_SYMBOL_UP, LV_SYMBOL_LIST, LV_SYMBOL_SETTINGS
-};
 static const char *navbar_tab_text[NAVBAR_TABS] = {
     "HOME", "MAP", "NAV", "TELEMETRY", "MORE",
 };
 
-// Decodes one UTF-8 codepoint at *s and advances *s past it. LV_SYMBOL_*
-// macros are UTF-8-encoded private-use-area codepoints (3 bytes each);
-// this file's plain ASCII tab labels are also valid (trivial) UTF-8, so
-// one decoder handles both call sites below. Malformed input (shouldn't
-// occur -- both string sources here are fixed, known-good) just advances
-// by one byte and returns the Unicode replacement character.
-static uint32_t utf8_next(const char **s)
+// Generic filled upward-pointing triangle, apex at (cx, cy - height/2),
+// base spanning cx-half_w..cx+half_w at the bottom row -- shared by a
+// couple of the tab icons below.
+static void draw_triangle_up(uint8_t *fb, int nat_w, int nat_h, int cx, int cy,
+                              int half_w, int height, uint16_t color)
 {
-    const uint8_t *p = (const uint8_t *)*s;
-    uint8_t c = p[0];
-    uint32_t cp;
-    int len;
-    if (c < 0x80)             { cp = c;        len = 1; }
-    else if ((c & 0xE0) == 0xC0) { cp = c & 0x1F; len = 2; }
-    else if ((c & 0xF0) == 0xE0) { cp = c & 0x0F; len = 3; }
-    else if ((c & 0xF8) == 0xF0) { cp = c & 0x07; len = 4; }
-    else { *s += 1; return 0xFFFD; }
-    for (int i = 1; i < len; i++) {
-        if ((p[i] & 0xC0) != 0x80) { *s += 1; return 0xFFFD; }
-        cp = (cp << 6) | (p[i] & 0x3F);
+    int top = -(height / 2);
+    for (int dy = 0; dy < height; dy++) {
+        int w = half_w * dy / (height - 1);
+        for (int dx = -w; dx <= w; dx++) {
+            set_logical_pixel(fb, nat_w, nat_h, cx + dx, cy + top + dy, color);
+        }
     }
-    *s += len;
-    return cp;
 }
 
-// Total advance width (logical px) of a UTF-8 string in `font` -- used to
-// center icons/labels in their navbar cell, same idea as
-// STATUS_CHAR_W*strlen() did for the fixed-width Terminus font elsewhere
-// in this file, just accounting for Montserrat's real (variable, kerned)
-// glyph widths instead.
-static int lv_string_width_logical(const lv_font_t *font, const char *text)
+// HOME -- triangular roof over a square base.
+static void draw_icon_home(uint8_t *fb, int nat_w, int nat_h, int cx, int cy, uint16_t color)
 {
-    int w = 0;
-    const char *s = text;
-    while (*s) {
-        const char *next_s = s;
-        uint32_t letter = utf8_next(&next_s);
-        const char *peek = next_s;
-        uint32_t next_letter = *next_s ? utf8_next(&peek) : 0;
-        lv_font_glyph_dsc_t dsc;
-        if (lv_font_get_glyph_dsc(font, &dsc, letter, next_letter)) {
-            w += dsc.adv_w;
-        }
-        s = next_s;
-    }
-    return w;
+    int roof_cy = cy - 5;
+    draw_triangle_up(fb, nat_w, nat_h, cx, roof_cy, 11, 12, color);
+    fill_logical_rect(fb, nat_w, nat_h, cx - 8, roof_cy + 6, 16, 9, color);
 }
 
-// Draws a UTF-8 string using LVGL's own font-glyph data, alpha-blended
-// (LVGL's Montserrat builds are 4-bit anti-aliased masks, not 1-bit) into
-// whatever's already at each destination pixel -- correct as long as
-// callers draw a solid background first, which ui_overlay_draw_navbar()
-// below always does. (lx, ly) is the top-left of the text's line box,
-// same convention lv_draw_label.c itself uses internally (matched here:
-// glyph_top = ly + (line_height - base_line) - box_h - ofs_y) -- verified
-// by reading that exact formula out of lv_draw_label.c rather than
-// guessing at LVGL's baseline convention.
-static void draw_lv_string_logical(uint8_t *fb, int nat_w, int nat_h,
-                                    const lv_font_t *font, int lx, int ly,
-                                    const char *text, uint16_t color)
+// MAP -- location pin: filled circle "head" with a triangular point below
+// it, same per-pixel-test convention as draw_ring_and_dot() above.
+static void draw_icon_pin(uint8_t *fb, int nat_w, int nat_h, int cx, int cy, uint16_t color)
 {
-    uint8_t r_fg = (uint8_t)(((color >> 11) & 0x1F) * 255 / 31);
-    uint8_t g_fg = (uint8_t)(((color >> 5) & 0x3F) * 255 / 63);
-    uint8_t b_fg = (uint8_t)((color & 0x1F) * 255 / 31);
-
-    int pen_x = lx;
-    const char *s = text;
-    while (*s) {
-        const char *next_s = s;
-        uint32_t letter = utf8_next(&next_s);
-        const char *peek = next_s;
-        uint32_t next_letter = *next_s ? utf8_next(&peek) : 0;
-
-        lv_font_glyph_dsc_t dsc;
-        if (!lv_font_get_glyph_dsc(font, &dsc, letter, next_letter)) {
-            s = next_s;
-            continue;
-        }
-
-        if (dsc.box_w > 0 && dsc.box_h > 0) {
-            dsc.req_raw_bitmap = 1;
-            const uint8_t *bitmap = lv_font_get_glyph_bitmap(&dsc, NULL);
-            if (bitmap) {
-                int glyph_x0 = pen_x + dsc.ofs_x;
-                int glyph_y0 = ly + (font->line_height - font->base_line) - dsc.box_h - dsc.ofs_y;
-                long bit_index = 0;
-                for (int row = 0; row < dsc.box_h; row++) {
-                    for (int col = 0; col < dsc.box_w; col++, bit_index++) {
-                        uint8_t byte = bitmap[bit_index / 2];
-                        uint8_t nibble = (bit_index & 1) ? (byte & 0x0F) : (byte >> 4);
-                        if (nibble == 0) continue; // fully transparent
-
-                        int nx, ny, nw, nh;
-                        logical_rect_to_native(glyph_x0 + col, glyph_y0 + row, 1, 1, &nx, &ny, &nw, &nh);
-                        if (nx < 0 || nx >= nat_w || ny < 0 || ny >= nat_h) continue;
-                        uint16_t *px = &((uint16_t *)fb)[ny * nat_w + nx];
-
-                        if (nibble == 15) { *px = color; continue; }
-
-                        uint8_t alpha = (uint8_t)(nibble * 17);
-                        uint16_t bg = *px;
-                        uint8_t r_bg = (uint8_t)(((bg >> 11) & 0x1F) * 255 / 31);
-                        uint8_t g_bg = (uint8_t)(((bg >> 5) & 0x3F) * 255 / 63);
-                        uint8_t b_bg = (uint8_t)((bg & 0x1F) * 255 / 31);
-                        uint8_t r = (uint8_t)((r_fg * alpha + r_bg * (255 - alpha)) / 255);
-                        uint8_t g = (uint8_t)((g_fg * alpha + g_bg * (255 - alpha)) / 255);
-                        uint8_t b = (uint8_t)((b_fg * alpha + b_bg * (255 - alpha)) / 255);
-                        *px = (uint16_t)(((r * 31 / 255) << 11) | ((g * 63 / 255) << 5) | (b * 31 / 255));
-                    }
-                }
+    int r = 7, r2 = r * r;
+    int head_cy = cy - 4;
+    for (int dy = -r; dy <= r; dy++) {
+        for (int dx = -r; dx <= r; dx++) {
+            if (dx * dx + dy * dy <= r2) {
+                set_logical_pixel(fb, nat_w, nat_h, cx + dx, head_cy + dy, color);
             }
         }
-        pen_x += dsc.adv_w;
-        s = next_s;
+    }
+    int tip_len = 9;
+    for (int dy = 0; dy < tip_len; dy++) {
+        int w = r * (tip_len - dy) / tip_len;
+        for (int dx = -w; dx <= w; dx++) {
+            set_logical_pixel(fb, nat_w, nat_h, cx + dx, head_cy + r - 2 + dy, color);
+        }
+    }
+}
+
+// NAV -- a plain arrowhead, same shape family as ui_nav.c's real rotating
+// bearing arrow (this one just always points up -- it's a tab icon, not a
+// live heading indicator).
+static void draw_icon_nav(uint8_t *fb, int nat_w, int nat_h, int cx, int cy, uint16_t color)
+{
+    draw_triangle_up(fb, nat_w, nat_h, cx, cy, 10, 20, color);
+}
+
+// TELEMETRY -- three ascending bars (instrument-panel shorthand).
+static void draw_icon_bars(uint8_t *fb, int nat_w, int nat_h, int cx, int cy, uint16_t color)
+{
+    static const int heights[3] = { 10, 16, 22 };
+    int w = 6, gap = 4;
+    int x0 = cx - (3 * w + 2 * gap) / 2;
+    int base_y = cy + 11; // bottom-align all three bars
+    for (int i = 0; i < 3; i++) {
+        fill_logical_rect(fb, nat_w, nat_h, x0 + i * (w + gap), base_y - heights[i],
+                           w, heights[i], color);
+    }
+}
+
+// MORE -- three stacked horizontal bars (hamburger menu).
+static void draw_icon_more(uint8_t *fb, int nat_w, int nat_h, int cx, int cy, uint16_t color)
+{
+    int w = 20, h = 3, gap = 6;
+    for (int i = -1; i <= 1; i++) {
+        fill_logical_rect(fb, nat_w, nat_h, cx - w / 2, cy + i * gap - h / 2, w, h, color);
+    }
+}
+
+static void draw_navbar_icon(uint8_t *fb, int nat_w, int nat_h, int tab_index,
+                              int cx, int cy, uint16_t color)
+{
+    switch (tab_index) {
+    case 0: draw_icon_home(fb, nat_w, nat_h, cx, cy, color); break;
+    case 1: draw_icon_pin(fb, nat_w, nat_h, cx, cy, color); break;
+    case 2: draw_icon_nav(fb, nat_w, nat_h, cx, cy, color); break;
+    case 3: draw_icon_bars(fb, nat_w, nat_h, cx, cy, color); break;
+    case 4: draw_icon_more(fb, nat_w, nat_h, cx, cy, color); break;
+    default: break;
     }
 }
 
@@ -488,13 +432,10 @@ void ui_overlay_draw_navbar(int active_tab)
                        MAP_THEME_DIVIDER_RGB565);
 
     // Vertically centers the (icon + gap + label + gap + indicator) block
-    // within the bar, using each font's own real line height rather than a
-    // hand-picked constant.
-    int icon_h = NAVBAR_ICON_FONT->line_height;
-    int label_h = NAVBAR_LABEL_FONT->line_height;
-    int block_h = icon_h + NAVBAR_ICON_GAP + label_h + NAVBAR_IND_GAP + NAVBAR_IND_H;
+    // within the bar.
+    int block_h = NAVBAR_ICON_H + NAVBAR_ICON_GAP + STATUS_CHAR_H + NAVBAR_IND_GAP + NAVBAR_IND_H;
     int top = NAVBAR_Y + (MAP_NAVBAR_H - block_h) / 2;
-    int label_y = top + icon_h + NAVBAR_ICON_GAP;
+    int label_y = top + NAVBAR_ICON_H + NAVBAR_ICON_GAP;
 
     for (int i = 0; i < NAVBAR_TABS; i++) {
         bool on = (i == active_tab);
@@ -503,17 +444,15 @@ void ui_overlay_draw_navbar(int active_tab)
         int cell_x0 = i * NAVBAR_CELL_W;
         int cell_cx = cell_x0 + NAVBAR_CELL_W / 2;
 
-        int icon_w = lv_string_width_logical(NAVBAR_ICON_FONT, navbar_tab_icon[i]);
-        draw_lv_string_logical(fb, nat_w, nat_h, NAVBAR_ICON_FONT,
-                               cell_cx - icon_w / 2, top, navbar_tab_icon[i], color);
+        draw_navbar_icon(fb, nat_w, nat_h, i, cell_cx, top + NAVBAR_ICON_H / 2, color);
 
-        int label_w = lv_string_width_logical(NAVBAR_LABEL_FONT, navbar_tab_text[i]);
-        draw_lv_string_logical(fb, nat_w, nat_h, NAVBAR_LABEL_FONT,
-                               cell_cx - label_w / 2, label_y, navbar_tab_text[i], color);
+        int label_w = (int)strlen(navbar_tab_text[i]) * STATUS_CHAR_W;
+        draw_string_logical(fb, nat_w, nat_h, cell_cx - label_w / 2, label_y,
+                             navbar_tab_text[i], color);
 
         if (on) {
             int ind_x = cell_x0 + (NAVBAR_CELL_W - NAVBAR_IND_W) / 2;
-            int ind_y = label_y + label_h + NAVBAR_IND_GAP;
+            int ind_y = label_y + STATUS_CHAR_H + NAVBAR_IND_GAP;
             fill_logical_rect(fb, nat_w, nat_h, ind_x, ind_y, NAVBAR_IND_W, NAVBAR_IND_H,
                                MAP_THEME_BLUE_RGB565);
         }
