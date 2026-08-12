@@ -26,8 +26,10 @@ static ppa_client_handle_t s_ppa_fill;
 
 // Buttons stack up from the top of the navbar now, not the bottom of the
 // full logical screen -- MAP_NAVBAR_H rows at the very bottom belong to
-// ui_overlay_draw_navbar() exclusively (see its own section below).
-#define BUTTON_AREA_BOTTOM (MAP_LOGICAL_H - MAP_NAVBAR_H)
+// ui_overlay_draw_navbar() exclusively (see its own section below). The
+// extra MAP_BUTTON_NAVBAR_CLEARANCE on top of that is deliberate empty
+// space, not owned by anything -- see its own comment in map_config.h.
+#define BUTTON_AREA_BOTTOM (MAP_LOGICAL_H - MAP_NAVBAR_H - MAP_BUTTON_NAVBAR_CLEARANCE)
 #define ZOOM_IN_X   (MAP_LOGICAL_W - MAP_BUTTON_MARGIN - MAP_BUTTON_SIZE)
 #define ZOOM_IN_Y   (BUTTON_AREA_BOTTOM - MAP_BUTTON_MARGIN - 2 * MAP_BUTTON_SIZE - MAP_BUTTON_GAP)
 #define ZOOM_OUT_X  ZOOM_IN_X

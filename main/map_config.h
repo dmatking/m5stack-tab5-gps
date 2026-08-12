@@ -53,6 +53,14 @@
 #define MAP_BUTTON_SIZE            80
 #define MAP_BUTTON_MARGIN          20
 #define MAP_BUTTON_GAP             12
+
+// Extra clearance between the bottom of this button stack (zoom-out) and
+// the navbar's top edge, on top of MAP_BUTTON_MARGIN -- zoom-out sits
+// directly above the navbar's MORE tab (same rightmost column), and with
+// just MAP_BUTTON_MARGIN's 20px gap it was too easy to fat-finger MORE
+// while reaching for "-". Defaults to one button-width's worth of extra
+// room, same idea as the margin itself, just more of it.
+#define MAP_BUTTON_NAVBAR_CLEARANCE MAP_BUTTON_SIZE
 #define MAP_BUTTON_BG_RGB565       MAP_THEME_CARD_RGB565
 #define MAP_BUTTON_GLYPH_RGB565    0xFFFF  // white
 #define MAP_BUTTON_GLYPH_THICKNESS 8       // px, the "+"/"-" bar thickness
