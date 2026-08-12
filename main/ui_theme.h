@@ -115,6 +115,13 @@ lv_obj_t *ui_compass(lv_obj_t *parent, lv_coord_t size,
 void ui_compass_set_heading(lv_obj_t *value_label, lv_obj_t *sub_label,
                             int deg, const char *cardinal);
 
+/* Small round clock-face icon (circle outline + two hands, hands pointing
+ * to 12 and 3 -- purely decorative, doesn't track real time). LVGL's stock
+ * symbol font has no clock glyph, unlike ui_compass()'s LV_SYMBOL_GPS-style
+ * built-ins -- this fills that gap the same hand-drawn-primitives way
+ * ui_compass() itself does. `size` is the icon's square footprint. */
+lv_obj_t *ui_clock_icon(lv_obj_t *parent, lv_coord_t size, lv_color_t color);
+
 #ifdef __cplusplus
 }
 #endif

@@ -171,3 +171,41 @@ void ui_compass_set_heading(lv_obj_t *value_label, lv_obj_t *sub_label,
     if (value_label) lv_label_set_text_fmt(value_label, "%03d", deg);
     if (sub_label && cardinal) lv_label_set_text(sub_label, cardinal);
 }
+
+lv_obj_t *ui_clock_icon(lv_obj_t *parent, lv_coord_t size, lv_color_t color)
+{
+    lv_obj_t *wrap = ui_box(parent);
+    lv_obj_set_size(wrap, size, size);
+
+    lv_obj_t *face = ui_box(wrap);
+    lv_obj_set_size(face, size, size);
+    lv_obj_center(face);
+    lv_obj_set_style_radius(face, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_color(face, color, 0);
+    lv_obj_set_style_border_width(face, LV_MAX(size / 14, 2), 0);
+
+    lv_coord_t hand_t = LV_MAX(size / 10, 2);
+
+    /* Minute hand, pointing to 12 -- center-to-top bar, bottom edge pinned
+     * to wrap's center so it reads as emanating from there. */
+    lv_coord_t min_len = size * 2 / 5;
+    lv_obj_t *minute = ui_box(wrap);
+    lv_obj_set_size(minute, hand_t, min_len);
+    lv_obj_set_style_radius(minute, hand_t / 2, 0);
+    lv_obj_set_style_bg_color(minute, color, 0);
+    lv_obj_set_style_bg_opa(minute, LV_OPA_COVER, 0);
+    lv_obj_align(minute, LV_ALIGN_CENTER, 0, -min_len / 2);
+
+    /* Hour hand, pointing to 3 -- shorter, same idea rotated 90 degrees
+     * (an axis-aligned bar rather than an actually-rotated one, same as
+     * the minute hand -- no lv_line/transform needed for two right angles). */
+    lv_coord_t hr_len = size * 3 / 10;
+    lv_obj_t *hour = ui_box(wrap);
+    lv_obj_set_size(hour, hr_len, hand_t);
+    lv_obj_set_style_radius(hour, hand_t / 2, 0);
+    lv_obj_set_style_bg_color(hour, color, 0);
+    lv_obj_set_style_bg_opa(hour, LV_OPA_COVER, 0);
+    lv_obj_align(hour, LV_ALIGN_CENTER, hr_len / 2, 0);
+
+    return wrap;
+}

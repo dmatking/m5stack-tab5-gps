@@ -174,7 +174,12 @@ ui_home_t *ui_home_create(lv_event_cb_t tab_cb)
     // it in sync with whichever of CDT/CST is actually in effect once real
     // data arrives.
     h->time_caption = ui_caption(utc, "TIME (CDT)");
-    ui_label(utc, LV_SYMBOL_REFRESH, ui_font.semi_m, UI_C_GREEN);
+    // A clock face, not LV_SYMBOL_REFRESH -- that was never the right icon
+    // for this card, just the closest stock LVGL symbol at hand. LVGL's
+    // symbol font has no clock glyph at all, so this is hand-drawn (see
+    // ui_theme.c's ui_clock_icon()) rather than a font character like the
+    // GPS_ACCURACY card's icon just above.
+    ui_clock_icon(utc, 32, UI_C_GREEN);
     h->utc_time = ui_label(utc, "15:24:18", ui_font.semi_l, UI_C_TEXT);
     // AM/PM on its own (smaller) line rather than appended to utc_time --
     // "3:24:18 PM" inline was wide enough to clip against this card's
