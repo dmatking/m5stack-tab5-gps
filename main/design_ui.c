@@ -16,6 +16,8 @@
 #include "design_ui.h"
 #include "ui_shell.h"
 
+#include "app_settings.h"
+
 static ui_home_t      *s_home_p;
 static ui_map_t       *s_map_p;
 static ui_nav_t       *s_nav_p;
@@ -41,6 +43,16 @@ static void goto_start_cb(lv_event_t *e)  { LV_UNUSED(e); ui_set_navigating(true
                                             ui_show_nav(); }
 static void goto_cancel_cb(lv_event_t *e) { LV_UNUSED(e); ui_show_tab(UI_TAB_HOME); }
 
+// Settings screen's "24-hour time" switch -- the one real (persisted, see
+// app_settings.h) row in the Units & Format group so far. gps_ui_bridge.c
+// re-formats every displayed clock on its own next 2Hz tick, so there's
+// no need to push a "settings changed" notification anywhere from here.
+static void time_24h_switch_cb(lv_event_t *e)
+{
+    bool on = lv_obj_has_state((lv_obj_t *)lv_event_get_target(e), LV_STATE_CHECKED);
+    app_settings_set_time_24h(on);
+}
+
 void ui_init(void)
 {
     ui_theme_init();
@@ -55,6 +67,12 @@ void ui_init(void)
     ui_nav_set_buttons(s_nav_p, nav_map_cb, nav_stop_cb);
     ui_goto_set_start_cb(s_goto_p, goto_start_cb, NULL);
     ui_goto_set_cancel_cb(s_goto_p, goto_cancel_cb, NULL);
+
+    // Sync the switch to the real persisted value -- ui_settings_create()
+    // itself always creates it unchecked (12-hour), same "creation-time
+    // placeholder, corrected right after" pattern as sw_screen_on/sw_sbas.
+    ui_settings_set_time_24h(s_set_p, app_settings_get_time_24h());
+    ui_settings_set_time_24h_cb(s_set_p, time_24h_switch_cb);
 
     ui_set_navigating(false);
     // Deliberately not loading a screen here -- ui_shell.c controls the

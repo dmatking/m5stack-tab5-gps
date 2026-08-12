@@ -129,6 +129,13 @@ ui_settings_t *ui_settings_create(lv_event_cb_t tab_cb)
     ui_divider(g2);
     row_value(g2, "Time zone", "CDT (UTC-5)", UI_C_MUTED, UI_SET_TIMEZONE,
               &s->value[UI_SET_TIMEZONE]);
+    ui_divider(g2);
+    // Real (persisted, see app_settings.h), unlike the rest of this group --
+    // added on its own ahead of wiring the others, per the user's own
+    // request. Off (12-hour) here is just the pre-sync creation-time value;
+    // design_ui.c's ui_init() calls ui_settings_set_time_24h() right after
+    // creation with the real persisted value.
+    s->sw_time_24h = row_switch(g2, "24-hour time", false);
 
     /* gnss ----------------------------------------------------------------- */
     lv_obj_t *g3 = group(body, "GNSS");
@@ -193,6 +200,13 @@ void ui_settings_set_sbas(ui_settings_t *s, bool on)
     else    lv_obj_remove_state(s->sw_sbas, LV_STATE_CHECKED);
 }
 
+void ui_settings_set_time_24h(ui_settings_t *s, bool on)
+{
+    if (!s) return;
+    if (on) lv_obj_add_state(s->sw_time_24h, LV_STATE_CHECKED);
+    else    lv_obj_remove_state(s->sw_time_24h, LV_STATE_CHECKED);
+}
+
 void ui_settings_set_storage(ui_settings_t *s, float used_gb, float total_gb)
 {
     if (s) lv_label_set_text_fmt(s->sd_usage, "%.1f / %.0f GB", used_gb, total_gb);
@@ -220,4 +234,10 @@ void ui_settings_set_brightness_cb(ui_settings_t *s, lv_event_cb_t cb)
 {
     if (s && cb)
         lv_obj_add_event_cb(s->brightness, cb, LV_EVENT_VALUE_CHANGED, NULL);
+}
+
+void ui_settings_set_time_24h_cb(ui_settings_t *s, lv_event_cb_t cb)
+{
+    if (s && cb)
+        lv_obj_add_event_cb(s->sw_time_24h, cb, LV_EVENT_VALUE_CHANGED, NULL);
 }

@@ -6,6 +6,7 @@
 
 #include "esp_log.h"
 
+#include "app_settings.h"
 #include "board_interface.h"
 #include "gps.h"
 #include "gps_ui_bridge.h"
@@ -55,6 +56,7 @@ void app_main(void)
 {
     ESP_LOGI(TAG, "app_main starting");
     board_init();
+    app_settings_init(); // before ui_shell_start() -- the Settings screen needs real persisted values at creation time
 
 #ifdef APP_USB_MSC_MODE
     // One-off dev-tool build: expose the SD card as a USB drive and stop --

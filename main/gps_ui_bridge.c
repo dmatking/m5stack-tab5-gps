@@ -12,6 +12,7 @@
 #include <math.h>
 #include <stdio.h>
 
+#include "app_settings.h"
 #include "design_ui.h"
 #include "gps.h"
 
@@ -163,6 +164,26 @@ static void us_central_from_utc(const struct tm *utc, struct tm *out_local,
     out_local->tm_mday = ld;
 }
 
+// Formats hour/min[/sec] as either 24-hour ("15:24"/"15:24:18") or
+// 12-hour ("3:24 PM"/"3:24:18 PM") depending on the Settings screen's
+// "24-hour time" switch (main/app_settings.h) -- shared by every clock
+// this file drives (Home/Telemetry's status-bar clocks and big time
+// cards, Telemetry's separate UTC card), so flipping the setting changes
+// all of them together rather than some ad hoc subset.
+static void format_clock(char *out, size_t out_size, int hour24, int min, int sec, bool with_seconds)
+{
+    if (app_settings_get_time_24h()) {
+        if (with_seconds) snprintf(out, out_size, "%02d:%02d:%02d", hour24, min, sec);
+        else              snprintf(out, out_size, "%02d:%02d", hour24, min);
+        return;
+    }
+    int hour12 = hour24 % 12;
+    if (hour12 == 0) hour12 = 12;
+    const char *ampm = hour24 < 12 ? "AM" : "PM";
+    if (with_seconds) snprintf(out, out_size, "%d:%02d:%02d %s", hour12, min, sec, ampm);
+    else              snprintf(out, out_size, "%d:%02d %s", hour12, min, ampm);
+}
+
 // Great-circle distance between two WGS84 points, in miles. Used by the
 // Telemetry trip accumulator below -- nothing else in this file needs it.
 static float haversine_miles(double lat1, double lon1, double lat2, double lon2)
@@ -227,8 +248,9 @@ static void tick(void)
     const char *tz_abbrev = NULL;
     if (have_local) {
         us_central_from_utc(&st.utc_tm, &local_tm, &tz_abbrev);
-        char clock_buf[16];
-        snprintf(clock_buf, sizeof(clock_buf), "%02d:%02d %s", local_tm.tm_hour, local_tm.tm_min, tz_abbrev);
+        char time_part[16], clock_buf[24];
+        format_clock(time_part, sizeof(time_part), local_tm.tm_hour, local_tm.tm_min, 0, false);
+        snprintf(clock_buf, sizeof(clock_buf), "%s %s", time_part, tz_abbrev);
         ui_status_set_clock(&h->status, clock_buf);
     }
 
@@ -268,8 +290,7 @@ static void tick(void)
             "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
         };
         char hms_buf[16], date_buf[32];
-        snprintf(hms_buf, sizeof(hms_buf), "%02d:%02d:%02d",
-                 local_tm.tm_hour, local_tm.tm_min, local_tm.tm_sec);
+        format_clock(hms_buf, sizeof(hms_buf), local_tm.tm_hour, local_tm.tm_min, local_tm.tm_sec, true);
         snprintf(date_buf, sizeof(date_buf), "%s %d, %d",
                  months[local_tm.tm_mon], local_tm.tm_mday, local_tm.tm_year + 1900);
         ui_home_set_local_time(h, hms_buf, date_buf, tz_abbrev);
@@ -289,8 +310,9 @@ static void tick(void)
         ui_status_set_fix(&t->status, fix ? "GPS FIX" : "NO FIX", fix);
         ui_status_set_sats(&t->status, st.sats_in_use, st.hdop_valid ? st.hdop : 0.0f);
         if (have_local) {
-            char clock_buf[16];
-            snprintf(clock_buf, sizeof(clock_buf), "%02d:%02d %s", local_tm.tm_hour, local_tm.tm_min, tz_abbrev);
+            char time_part[16], clock_buf[24];
+            format_clock(time_part, sizeof(time_part), local_tm.tm_hour, local_tm.tm_min, 0, false);
+            snprintf(clock_buf, sizeof(clock_buf), "%s %s", time_part, tz_abbrev);
             ui_status_set_clock(&t->status, clock_buf);
         }
 
@@ -355,10 +377,8 @@ static void tick(void)
         // no UTC-vs-local tradeoff to make here, just show both for real.
         if (have_local) {
             char local_buf[16], utc_buf[16];
-            snprintf(local_buf, sizeof(local_buf), "%02d:%02d:%02d",
-                     local_tm.tm_hour, local_tm.tm_min, local_tm.tm_sec);
-            snprintf(utc_buf, sizeof(utc_buf), "%02d:%02d:%02d",
-                     st.utc_tm.tm_hour, st.utc_tm.tm_min, st.utc_tm.tm_sec);
+            format_clock(local_buf, sizeof(local_buf), local_tm.tm_hour, local_tm.tm_min, local_tm.tm_sec, true);
+            format_clock(utc_buf, sizeof(utc_buf), st.utc_tm.tm_hour, st.utc_tm.tm_min, st.utc_tm.tm_sec, true);
             ui_telemetry_set_time(t, local_buf, utc_buf, tz_abbrev);
         }
 
