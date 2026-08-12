@@ -184,6 +184,27 @@ static void format_clock(char *out, size_t out_size, int hour24, int min, int se
     else              snprintf(out, out_size, "%d:%02d %s", hour12, min, ampm);
 }
 
+// Same idea as format_clock(), but for Home's big time card specifically,
+// which needs the AM/PM suffix on its own (smaller) line rather than
+// appended inline -- "3:24:18 PM" was wide enough to clip against that
+// card's edges in 12-hour mode. ampm_out is "" in 24-hour mode (nothing to
+// show); ui_home_set_local_time() hides that line entirely when it sees
+// an empty string, rather than leaving a gap.
+static void format_clock_split(char *hms_out, size_t hms_size,
+                                char *ampm_out, size_t ampm_size,
+                                int hour24, int min, int sec)
+{
+    if (app_settings_get_time_24h()) {
+        snprintf(hms_out, hms_size, "%02d:%02d:%02d", hour24, min, sec);
+        ampm_out[0] = '\0';
+        return;
+    }
+    int hour12 = hour24 % 12;
+    if (hour12 == 0) hour12 = 12;
+    snprintf(hms_out, hms_size, "%d:%02d:%02d", hour12, min, sec);
+    snprintf(ampm_out, ampm_size, "%s", hour24 < 12 ? "AM" : "PM");
+}
+
 // Great-circle distance between two WGS84 points, in miles. Used by the
 // Telemetry trip accumulator below -- nothing else in this file needs it.
 static float haversine_miles(double lat1, double lon1, double lat2, double lon2)
@@ -289,11 +310,12 @@ static void tick(void)
             "Jan", "Feb", "Mar", "Apr", "May", "Jun",
             "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
         };
-        char hms_buf[16], date_buf[32];
-        format_clock(hms_buf, sizeof(hms_buf), local_tm.tm_hour, local_tm.tm_min, local_tm.tm_sec, true);
+        char hms_buf[16], ampm_buf[4], date_buf[32];
+        format_clock_split(hms_buf, sizeof(hms_buf), ampm_buf, sizeof(ampm_buf),
+                           local_tm.tm_hour, local_tm.tm_min, local_tm.tm_sec);
         snprintf(date_buf, sizeof(date_buf), "%s %d, %d",
                  months[local_tm.tm_mon], local_tm.tm_mday, local_tm.tm_year + 1900);
-        ui_home_set_local_time(h, hms_buf, date_buf, tz_abbrev);
+        ui_home_set_local_time(h, hms_buf, ampm_buf, date_buf, tz_abbrev);
     }
 
     // Deliberately not touched: Home's own trip widget (needs avg-speed and

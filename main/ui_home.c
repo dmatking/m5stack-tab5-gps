@@ -176,6 +176,12 @@ ui_home_t *ui_home_create(lv_event_cb_t tab_cb)
     h->time_caption = ui_caption(utc, "TIME (CDT)");
     ui_label(utc, LV_SYMBOL_REFRESH, ui_font.semi_m, UI_C_GREEN);
     h->utc_time = ui_label(utc, "15:24:18", ui_font.semi_l, UI_C_TEXT);
+    // AM/PM on its own (smaller) line rather than appended to utc_time --
+    // "3:24:18 PM" inline was wide enough to clip against this card's
+    // edges in 12-hour mode. Hidden entirely in 24-hour mode (no AM/PM to
+    // show) rather than left blank, so it doesn't leave a gap in the
+    // layout -- see ui_home_set_local_time().
+    h->utc_ampm = ui_label(utc, "PM", ui_font.s, UI_C_MUTED);
     h->utc_date = ui_label(utc, "May 26, 2025", ui_font.s, UI_C_MUTED);
 
     /* trip strip ---------------------------------------------------------- */
@@ -260,12 +266,21 @@ void ui_home_set_satellites(ui_home_t *h, int count, const char *quality)
     }
 }
 
-void ui_home_set_local_time(ui_home_t *h, const char *hms, const char *date, const char *tz_abbrev)
+void ui_home_set_local_time(ui_home_t *h, const char *hms, const char *ampm,
+                            const char *date, const char *tz_abbrev)
 {
     if (!h) return;
     if (hms)       lv_label_set_text(h->utc_time, hms);
     if (date)      lv_label_set_text(h->utc_date, date);
     if (tz_abbrev) lv_label_set_text_fmt(h->time_caption, "TIME (%s)", tz_abbrev);
+    // NULL/empty (24-hour mode -- no AM/PM to show) hides the row entirely
+    // rather than leaving it blank, so it doesn't leave a gap in the card.
+    if (ampm && *ampm) {
+        lv_label_set_text(h->utc_ampm, ampm);
+        lv_obj_remove_flag(h->utc_ampm, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(h->utc_ampm, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 void ui_home_set_trip(ui_home_t *h, float distance_mi, const char *moving,

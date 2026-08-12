@@ -31,6 +31,7 @@ typedef struct {
     lv_obj_t *acc_quality;
     lv_obj_t *time_caption;   /* "TIME (CDT)"/"TIME (CST)" -- see ui_home_set_local_time() */
     lv_obj_t *utc_time;
+    lv_obj_t *utc_ampm;       /* own line, hidden entirely in 24-hour mode */
     lv_obj_t *utc_date;
 
     lv_obj_t *trip_distance;
@@ -60,7 +61,11 @@ void ui_home_set_satellites(ui_home_t *h, int count, const char *quality);
 // US Central time (see gps_ui_bridge.c's us_central_from_utc()), and
 // updates the card's own caption to say which one (CDT/CST) is currently
 // in effect, since that flips twice a year.
-void ui_home_set_local_time(ui_home_t *h, const char *hms, const char *date, const char *tz_abbrev);
+// ampm is "AM"/"PM" (own line, smaller font -- inline "3:24:18 PM" used to
+// clip against the card's edges) or NULL/"" in 24-hour mode, which hides
+// that line entirely rather than leaving it blank.
+void ui_home_set_local_time(ui_home_t *h, const char *hms, const char *ampm,
+                            const char *date, const char *tz_abbrev);
 void ui_home_set_trip(ui_home_t *h, float distance_mi, const char *moving,
                       float avg_mph, float max_mph, int gain_ft);
 void ui_home_set_tracking(ui_home_t *h, bool on);
