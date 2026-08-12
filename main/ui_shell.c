@@ -58,6 +58,7 @@
 #include "esp_lcd_mipi_dsi.h"
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
+#include "esp_timer.h"
 #include "lvgl.h"
 
 #include "freertos/FreeRTOS.h"
@@ -67,16 +68,53 @@ static const char *TAG = "UI_SHELL";
 
 static lv_display_t *s_disp;
 
+// Same screen-off idle timeout as the Map screen (main/map_view.c),
+// reusing its exact constant/value (MAP_SCREEN_TIMEOUT_US, map_config.h)
+// rather than a second copy of the same setting -- touch activity only,
+// deliberately not GPS/background updates, same reasoning as map_view.c's
+// own version: the screen would never time out on its own otherwise,
+// since GPS keeps streaming fixes regardless of whether anyone's looking.
+// Implemented as an lv_timer (not a plain FreeRTOS task) specifically so
+// it naturally pauses itself while the Map screen is up -- lvgl_port_stop()
+// halts LVGL's whole timer subsystem then, so this stops ticking right
+// along with everything else and can't fight with map_view.c's own
+// independent timeout logic over the same backlight.
+static int64_t s_last_activity_us;
+static bool s_lvgl_screen_on = true;
+
 static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
 {
     (void)indev;
     touch_point_t pt;
-    if (touch_poll_multi(&pt, 1) >= 1) {
+    bool pressed = touch_poll_multi(&pt, 1) >= 1;
+    if (pressed) {
+        s_last_activity_us = esp_timer_get_time();
+        if (!s_lvgl_screen_on) {
+            // Waking from an idle timeout consumes this touch -- same
+            // convention as map_view.c's own wake handling -- so it
+            // doesn't also land on whatever happened to be under the
+            // finger the moment the screen came back on.
+            board_lcd_set_backlight(true);
+            s_lvgl_screen_on = true;
+            data->state = LV_INDEV_STATE_RELEASED;
+            return;
+        }
         data->point.x = pt.x;
         data->point.y = pt.y;
         data->state = LV_INDEV_STATE_PRESSED;
     } else {
         data->state = LV_INDEV_STATE_RELEASED;
+    }
+}
+
+static void idle_timer_cb(lv_timer_t *timer)
+{
+    (void)timer;
+    if (!s_lvgl_screen_on) return; // already off, waiting on touch_read_cb() to wake it
+    if (MAP_SCREEN_TIMEOUT_US <= 0) return;
+    if (esp_timer_get_time() - s_last_activity_us > MAP_SCREEN_TIMEOUT_US) {
+        board_lcd_set_backlight(false);
+        s_lvgl_screen_on = false;
     }
 }
 
@@ -118,6 +156,18 @@ void ui_shell_return_to_tab(int tab_index)
     }
 
     ESP_LOGI(TAG, "Returning to tab %d from the map", tab_index);
+    // The LVGL-side idle timer (see touch_read_cb()/idle_timer_cb() above)
+    // was paused this whole time -- lvgl_port_stop() halts LVGL's timer
+    // subsystem, so it simply stopped ticking rather than tracking
+    // anything wrong. But s_last_activity_us is still whatever it was
+    // right before the Map screen took over, possibly minutes ago; reset
+    // both here so the timer doesn't immediately think the screen's been
+    // idle since then the moment it resumes. (The physical backlight is
+    // already on: map_view.c only lets a navbar tap like this one reach
+    // ui_shell_return_to_tab() at all while its own screen-on is true --
+    // an idle Map screen consumes the first tap to wake itself instead.)
+    s_last_activity_us = esp_timer_get_time();
+    s_lvgl_screen_on = true;
     lvgl_port_resume();
 
     if (lvgl_port_lock(0)) {
@@ -241,6 +291,9 @@ void ui_shell_start(void)
         lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
         lv_indev_set_read_cb(indev, touch_read_cb);
         lv_indev_set_disp(indev, s_disp);
+
+        s_last_activity_us = esp_timer_get_time();
+        lv_timer_create(idle_timer_cb, 1000, NULL);
 
         // Splash first, before anything else exists to flash by -- see
         // create_and_load_splash()'s comment. Only after it's the active
