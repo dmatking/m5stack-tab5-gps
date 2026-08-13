@@ -85,22 +85,10 @@ ui_home_t *ui_home_create(lv_event_cb_t tab_cb)
     h->pos_line1 = ui_label(pos, "32\xC2\xB0 54.1234' N", ui_font.semi_l, UI_C_TEXT);
     h->pos_line2 = ui_label(pos, "097\xC2\xB0 19.5678' W", ui_font.semi_l, UI_C_TEXT);
 
-    lv_obj_t *pos_sub = ui_box(pos);
-    lv_obj_set_size(pos_sub, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    ui_flex_row(pos_sub, 20);
-    lv_obj_set_flex_align(pos_sub, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_CENTER);
-    // "+/-" not "\xC2\xB1" (±) -- LVGL's built-in Montserrat fonts only
-    // include ASCII plus the degree sign, nothing else outside that; ± (and
-    // every other non-ASCII punctuation this design used) rendered as a
-    // tofu box on real hardware. Confirmed via a real ± usage elsewhere in
-    // this same file/other UI files (photographed on the actual panel).
-    h->pos_acc = ui_label(pos_sub, LV_SYMBOL_WARNING " +/- 9.4 ft", ui_font.s, UI_C_MUTED);
-    lv_obj_t *bar = ui_box(pos_sub);
-    lv_obj_set_size(bar, 1, 24);
-    lv_obj_set_style_bg_color(bar, UI_C_BORDER, 0);
-    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
-    h->pos_alt = ui_label(pos_sub, "1,248 ft", ui_font.s, UI_C_MUTED);
+    // No accuracy/altitude sub-line here anymore -- it duplicated the
+    // ALTITUDE card and GPS ACCURACY card in the row below with no added
+    // info, just noise. ui_home_set_accuracy()/ui_home_set_altitude() used
+    // to update both; now just the cards.
 
     /* speed / heading / altitude ----------------------------------------- */
     lv_obj_t *row1 = ui_box(body);
@@ -235,7 +223,6 @@ void ui_home_set_position(ui_home_t *h, const char *lat, const char *lon)
 void ui_home_set_accuracy(ui_home_t *h, float feet)
 {
     if (!h) return;
-    lv_label_set_text_fmt(h->pos_acc, "+/- %.1f ft", feet);
     lv_label_set_text_fmt(h->acc_val, "+/- %.1f ft", feet);
     const char *q = feet <= 16.0f ? "Good" : (feet <= 40.0f ? "Fair" : "Poor");
     lv_label_set_text(h->acc_quality, q);
@@ -257,7 +244,6 @@ void ui_home_set_altitude(ui_home_t *h, int feet)
 {
     if (!h) return;
     lv_label_set_text_fmt(h->altitude, "%d", feet);
-    lv_label_set_text_fmt(h->pos_alt, "%d ft", feet);
 }
 
 void ui_home_set_satellites(ui_home_t *h, int count, const char *quality)

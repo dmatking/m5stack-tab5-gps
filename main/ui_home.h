@@ -16,8 +16,6 @@ typedef struct {
 
     lv_obj_t *pos_line1;      /* 32° 54.1234' N   */
     lv_obj_t *pos_line2;      /* 097° 19.5678' W  */
-    lv_obj_t *pos_acc;        /* +/- 9.4 ft       */
-    lv_obj_t *pos_alt;        /* 1,248 ft         */
 
     lv_obj_t *speed;
     lv_obj_t *heading_val;
