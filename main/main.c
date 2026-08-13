@@ -8,6 +8,7 @@
 
 #include "app_settings.h"
 #include "board_interface.h"
+#include "fb_capture.h"
 #include "gps.h"
 #include "gps_ui_bridge.h"
 #include "map_view.h"
@@ -103,5 +104,7 @@ void app_main(void)
     // before returning, so ui_home() is already valid here even though the
     // splash screen is still showing in front of it.
     gps_ui_bridge_start();
+
+    fb_capture_start(); // on-demand screen capture over USB -- see main/fb_capture.c
 #endif
 }

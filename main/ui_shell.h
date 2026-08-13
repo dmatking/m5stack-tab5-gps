@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <stdbool.h>
+
 // Set up LVGL and show the splash screen, then the real design UI
 // (main/design_ui.c -- Home screen + tab bar). Call once, after
 // board_init() and every native subsystem the map screen depends on
@@ -33,3 +35,10 @@ void ui_shell_return_to_tab(int tab_index);
 // already LVGL screens themselves and don't need the native-renderer
 // handoff ui_shell_return_to_tab() does. Takes the LVGL port lock itself.
 void ui_shell_show_main_menu(void);
+
+// True while the Map screen's native renderer owns the panel (LVGL
+// stopped, see ui_shell_enter_map()) -- lv_screen_active() still returns
+// whatever LVGL screen was loaded before the handoff, not what's actually
+// on the panel, so callers that snapshot the active screen (main/fb_capture.c)
+// need to check this first rather than capturing stale/wrong content.
+bool ui_shell_map_active(void);

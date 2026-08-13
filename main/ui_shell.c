@@ -81,6 +81,7 @@ static lv_display_t *s_disp;
 // independent timeout logic over the same backlight.
 static int64_t s_last_activity_us;
 static bool s_lvgl_screen_on = true;
+static bool s_map_active = false; // true while the native map renderer owns the panel (see ui_shell_map_active())
 
 static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
 {
@@ -126,9 +127,17 @@ static void idle_timer_cb(lv_timer_t *timer)
 void ui_shell_enter_map(void)
 {
     ESP_LOGI(TAG, "Map selected -- stopping LVGL and handing the panel to the native map renderer");
+    s_map_active = true;
     lvgl_port_stop();
     map_view_start();
 }
+
+// Lets other subsystems (main/fb_capture.c) tell whether lv_screen_active()
+// currently reflects what's actually on the panel -- it doesn't while the
+// Map screen is up (LVGL is stopped, see ui_shell_enter_map() above, and
+// lv_screen_active() just keeps returning whatever screen was loaded before
+// the handoff).
+bool ui_shell_map_active(void) { return s_map_active; }
 
 // Mirrors esp_lvgl_port's own (private) DPI on_color_trans_done callback --
 // see the file header comment for why this is registered permanently
@@ -168,6 +177,7 @@ void ui_shell_return_to_tab(int tab_index)
     // an idle Map screen consumes the first tap to wake itself instead.)
     s_last_activity_us = esp_timer_get_time();
     s_lvgl_screen_on = true;
+    s_map_active = false;
     lvgl_port_resume();
 
     if (lvgl_port_lock(0)) {

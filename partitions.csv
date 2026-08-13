@@ -1,6 +1,15 @@
-# Name,   Type, SubType, Offset,   Size, Flags
-nvs,      data, nvs,     0x9000,   0x6000,
-otadata,  data, ota,     0xf000,   0x2000,
-phy_init, data, phy,     0x11000,  0x1000,
-ota_0,    app,  ota_0,   0x20000,  2M,
-ota_1,    app,  ota_1,   0x220000, 2M,
+# Name,   Type, SubType,   Offset,   Size, Flags
+nvs,      data, nvs,       0x9000,   0x6000,
+otadata,  data, ota,       0xf000,   0x2000,
+phy_init, data, phy,       0x11000,  0x1000,
+ota_0,    app,  ota_0,     0x20000,  2M,
+ota_1,    app,  ota_1,     0x220000, 2M,
+# Raw scratch space for main/fb_capture.c's screen capture -- one tightly
+# packed RGB565 frame (UI_SCREEN_W*UI_SCREEN_H*2 = 1843200 bytes, see
+# ui_theme.h), no filesystem, just esp_partition_write()/read() at a fixed
+# offset. Pulled off via `parttool.py read_partition --partition-name
+# snapshot` (see tools/pull_snapshot.py) rather than any live transfer over
+# USB-Serial-JTAG -- see fb_capture.c's file header for why. 2M (only
+# ~1.84M needed) keeps the offset round and leaves headroom if the screen
+# ever grows.
+snapshot, data, undefined, 0x420000, 2M,
