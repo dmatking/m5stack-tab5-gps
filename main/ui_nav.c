@@ -13,6 +13,7 @@ static lv_obj_t *stat_card(lv_obj_t *parent, const char *caption,
                            lv_obj_t **out_value)
 {
     lv_obj_t *c = ui_card(parent);
+    ui_mark_placeholder(c); // every stat this screen shows is a fixed demo value -- see project notes
     lv_obj_set_height(c, LV_SIZE_CONTENT);
     lv_obj_set_flex_grow(c, 1);
     lv_obj_set_style_pad_hor(c, 20, 0);
@@ -58,6 +59,7 @@ ui_nav_t *ui_nav_create(lv_event_cb_t tab_cb)
 
     /* destination header --------------------------------------------------- */
     lv_obj_t *dest = ui_card(body);
+    ui_mark_placeholder(dest); // whole screen is demo values -- see project notes
     lv_obj_set_width(dest, LV_PCT(100));
     lv_obj_set_height(dest, LV_SIZE_CONTENT);
     lv_obj_set_style_pad_hor(dest, 20, 0);
@@ -77,6 +79,7 @@ ui_nav_t *ui_nav_create(lv_event_cb_t tab_cb)
 
     /* bearing rose --------------------------------------------------------- */
     lv_obj_t *rose = ui_card(body);
+    ui_mark_placeholder(rose);
     lv_obj_set_width(rose, LV_PCT(100));
     lv_obj_set_height(rose, LV_SIZE_CONTENT);
     lv_obj_set_style_pad_all(rose, 14, 0);
@@ -136,6 +139,7 @@ ui_nav_t *ui_nav_create(lv_event_cb_t tab_cb)
 
     /* distance to go ------------------------------------------------------- */
     lv_obj_t *dist = ui_card(body);
+    ui_mark_placeholder(dist);
     lv_obj_set_width(dist, LV_PCT(100));
     lv_obj_set_height(dist, LV_SIZE_CONTENT);
     lv_obj_set_style_pad_hor(dist, 22, 0);
@@ -167,6 +171,7 @@ ui_nav_t *ui_nav_create(lv_event_cb_t tab_cb)
 
     /* cross track ---------------------------------------------------------- */
     lv_obj_t *xtk = ui_card(body);
+    ui_mark_placeholder(xtk);
     lv_obj_set_width(xtk, LV_PCT(100));
     lv_obj_set_height(xtk, LV_SIZE_CONTENT);
     lv_obj_set_style_pad_hor(xtk, 20, 0);

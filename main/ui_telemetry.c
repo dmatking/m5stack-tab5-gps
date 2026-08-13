@@ -106,6 +106,9 @@ ui_telemetry_t *ui_telemetry_create(lv_event_cb_t tab_cb)
 
     /* signal --------------------------------------------------------------- */
     lv_obj_t *sig = ui_card(body);
+    // gps.c doesn't parse GSV yet, so these bars/constellations are demo
+    // values -- see project notes. Everything else on this screen is real.
+    ui_mark_placeholder(sig);
     lv_obj_set_width(sig, LV_PCT(100));
     lv_obj_set_flex_grow(sig, 1);
     lv_obj_set_style_pad_hor(sig, 20, 0);

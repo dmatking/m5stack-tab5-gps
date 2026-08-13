@@ -209,3 +209,14 @@ lv_obj_t *ui_clock_icon(lv_obj_t *parent, lv_coord_t size, lv_color_t color)
 
     return wrap;
 }
+
+void ui_mark_placeholder(lv_obj_t *card)
+{
+#if UI_DEBUG_MARK_PLACEHOLDERS
+    if (!card) return;
+    lv_obj_set_style_bg_color(card, UI_C_CARD_PLACEHOLDER, 0);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+#else
+    (void)card;
+#endif
+}

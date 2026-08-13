@@ -120,6 +120,9 @@ ui_goto_t *ui_goto_create(lv_event_cb_t tab_cb)
 
     /* entry / saved segmented control -------------------------------------- */
     lv_obj_t *seg = ui_card(body);
+    // "Saved waypoints" has no event handler at all -- tapping it does
+    // nothing right now (no waypoint storage exists yet). See project notes.
+    ui_mark_placeholder(seg);
     lv_obj_set_width(seg, LV_PCT(100));
     lv_obj_set_height(seg, LV_SIZE_CONTENT);
     lv_obj_set_style_pad_all(seg, 6, 0);
@@ -188,6 +191,9 @@ ui_goto_t *ui_goto_create(lv_event_cb_t tab_cb)
 
     /* recent waypoint ------------------------------------------------------- */
     lv_obj_t *rec = ui_card(body);
+    // Fixed demo waypoint ("Gemini Bridges"), and clickable in name only --
+    // no event handler either. See project notes.
+    ui_mark_placeholder(rec);
     lv_obj_set_width(rec, LV_PCT(100));
     lv_obj_set_height(rec, LV_SIZE_CONTENT);
     lv_obj_set_style_pad_hor(rec, 20, 0);

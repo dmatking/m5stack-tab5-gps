@@ -30,6 +30,16 @@ LV_FONT_DECLARE(ui_font_bold_62)   /* Bold 62px, digits subset */
 LV_FONT_DECLARE(ui_font_bold_86)   /* Bold 86px, digits subset */
 #endif
 
+/* QA aid, not a real theme option: when on, ui_mark_placeholder() tints a
+ * card's background light red -- used to flag cards across every screen
+ * that are still showing decorative/demo values rather than anything
+ * wired to real data. One flag to flip both ways: set to 0 to build with
+ * every card back to its normal color without hunting down each call
+ * site (see ui_mark_placeholder()'s call sites for the actual list). */
+#ifndef UI_DEBUG_MARK_PLACEHOLDERS
+#define UI_DEBUG_MARK_PLACEHOLDERS 1
+#endif
+
 /* ---- palette (matches the mockups) ------------------------------------- */
 #define UI_C_BG        lv_color_hex(0x05080C)
 #define UI_C_CARD      lv_color_hex(0x0D141C)
@@ -48,6 +58,8 @@ LV_FONT_DECLARE(ui_font_bold_86)   /* Bold 86px, digits subset */
 #define UI_C_BLUE_BTN  lv_color_hex(0x1C64F2)
 #define UI_C_RED       lv_color_hex(0xE5646E)
 #define UI_C_MAP_BG    lv_color_hex(0x0A1017)
+/* UI_C_CARD blended ~35% toward UI_C_RED -- see ui_mark_placeholder(). */
+#define UI_C_CARD_PLACEHOLDER lv_color_hex(0x593039)
 #define UI_C_MAP_GRID  lv_color_hex(0x0E151E)
 #define UI_C_MAP_ROAD  lv_color_hex(0x243040)
 #define UI_C_MAP_TRACK lv_color_hex(0x1C2735)
@@ -121,6 +133,10 @@ void ui_compass_set_heading(lv_obj_t *value_label, lv_obj_t *sub_label,
  * built-ins -- this fills that gap the same hand-drawn-primitives way
  * ui_compass() itself does. `size` is the icon's square footprint. */
 lv_obj_t *ui_clock_icon(lv_obj_t *parent, lv_coord_t size, lv_color_t color);
+
+/* QA aid -- see UI_DEBUG_MARK_PLACEHOLDERS above. No-op (and card is
+ * otherwise untouched) when that flag is 0. */
+void ui_mark_placeholder(lv_obj_t *card);
 
 #ifdef __cplusplus
 }

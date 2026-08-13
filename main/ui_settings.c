@@ -93,6 +93,12 @@ ui_settings_t *ui_settings_create(lv_event_cb_t tab_cb)
 
     /* display -------------------------------------------------------------- */
     lv_obj_t *g1 = group(body, "DISPLAY");
+    // Every row in every group on this screen is decorative except the
+    // "24-hour time" switch in g2 below -- see project notes. Groups (not
+    // individual rows) are the actual ui_card()s here, so g2's one real
+    // row gets caught up in its group's tint too; noted rather than
+    // engineered around, this is a QA aid, not a precision instrument.
+    ui_mark_placeholder(g1);
 
     lv_obj_t *br = row_base(g1, "Brightness");
     lv_obj_t *brr = ui_box(br);
@@ -118,6 +124,7 @@ ui_settings_t *ui_settings_create(lv_event_cb_t tab_cb)
 
     /* units ---------------------------------------------------------------- */
     lv_obj_t *g2 = group(body, "UNITS & FORMAT");
+    ui_mark_placeholder(g2); // see g1's comment above -- catches the real 24h-time row too
     row_value(g2, "Distance / speed", "mi / mph", UI_C_BLUE, UI_SET_UNITS,
               &s->value[UI_SET_UNITS]);
     ui_divider(g2);
@@ -139,6 +146,7 @@ ui_settings_t *ui_settings_create(lv_event_cb_t tab_cb)
 
     /* gnss ----------------------------------------------------------------- */
     lv_obj_t *g3 = group(body, "GNSS");
+    ui_mark_placeholder(g3);
     row_value(g3, "Constellations", "GPS + GLO + GAL", UI_C_MUTED,
               UI_SET_CONSTELLATIONS, &s->value[UI_SET_CONSTELLATIONS]);
     ui_divider(g3);
@@ -149,6 +157,7 @@ ui_settings_t *ui_settings_create(lv_event_cb_t tab_cb)
 
     /* logging -------------------------------------------------------------- */
     lv_obj_t *g4 = group(body, "LOGGING & STORAGE");
+    ui_mark_placeholder(g4);
     // "|" not "\xC2\xB7" (·) below -- see ui_home.c's ± comment; same
     // missing-glyph issue, different character, same fix.
     row_value(g4, "Track log", "Recording | 5 s", UI_C_GREEN,

@@ -191,6 +191,7 @@ ui_home_t *ui_home_create(lv_event_cb_t tab_cb)
 
     /* trip strip ---------------------------------------------------------- */
     lv_obj_t *trip = ui_card(body);
+    ui_mark_placeholder(trip); // gps_ui_bridge.c never calls ui_home_set_trip() -- see project notes
     lv_obj_set_width(trip, LV_PCT(100));
     lv_obj_set_height(trip, LV_SIZE_CONTENT);
     lv_obj_set_style_pad_all(trip, 14, 0);
