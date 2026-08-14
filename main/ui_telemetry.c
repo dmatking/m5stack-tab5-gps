@@ -54,9 +54,13 @@ ui_telemetry_t *ui_telemetry_create(lv_event_cb_t tab_cb)
     lv_obj_set_style_pad_bottom(body, 16, 0);
     ui_flex_col(body, 12);
 
-    lv_obj_t *r1 = row(body);
-    cell(r1, 1, "SPEED",        "24.3", ui_font.num_l, UI_C_TEXT,  &t->speed);
-    cell(r1, 1, "TRUE HEADING", "067\xC2\xB0", ui_font.num_l, UI_C_GREEN, &t->heading);
+    // SPEED/TRUE HEADING/ALTITUDE MSL/SATELLITES/TRIP row all dropped from
+    // this screen -- they just restated Home's own cards in a plainer form
+    // (Home's HEADING is a compass dial vs. this screen's old bare "067°";
+    // Home's TRIP has 5 fields + a Reset button vs. this screen's old 3
+    // with none). What's left is only what Home *doesn't* show: vertical
+    // speed, raw HDOP, UTC time, decimal-degree coordinates, and the
+    // per-satellite SIGNAL chart.
 
     /* position ------------------------------------------------------------- */
     lv_obj_t *pos = ui_card(body);
@@ -72,32 +76,22 @@ ui_telemetry_t *ui_telemetry_create(lv_event_cb_t tab_cb)
     lv_obj_set_flex_align(pos, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
     ui_caption(pos, "POSITION | WGS84");
-    t->pos_line1 = ui_label(pos, "32\xC2\xB0 54.1234' N", ui_font.semi_l, UI_C_TEXT);
-    t->pos_line2 = ui_label(pos, "097\xC2\xB0 19.5678' W", ui_font.semi_l, UI_C_TEXT);
-    t->pos_dd    = ui_label(pos, "32.902057, -97.326130 | DD", ui_font.s, UI_C_MUTED);
+    // Only the decimal-degree line -- the DD MM.MMMM lines this card used
+    // to also show duplicated Home's CURRENT POSITION card exactly; DD is
+    // the one coordinate format Home doesn't have.
+    t->pos_dd = ui_label(pos, "32.902057, -97.326130 | DD", ui_font.semi_l, UI_C_TEXT);
 
-    lv_obj_t *r2 = row(body);
-    cell(r2, 1, "ALTITUDE MSL",   "1,248 ft", ui_font.num_m, UI_C_TEXT, &t->altitude);
-    cell(r2, 1, "VERTICAL SPEED", "+210 fpm", ui_font.num_m, UI_C_TEXT, &t->vspeed);
+    lv_obj_t *row1 = row(body);
+    cell(row1, 1, "VERTICAL SPEED", "+210 fpm", ui_font.num_m, UI_C_TEXT, &t->vspeed);
+    cell(row1, 1, "HDOP",           "0.8",      ui_font.num_m, UI_C_GREEN, &t->hdop);
 
-    lv_obj_t *r3 = row(body);
-    cell(r3, 1, "SATELLITES", "14/19", ui_font.num_m, UI_C_TEXT,  &t->sats);
-    cell(r3, 1, "HDOP",       "0.8",   ui_font.num_m, UI_C_GREEN, &t->hdop);
-    // "+/-" not ± -- see the ui_common.c-wide comment above; LVGL's built-in
-    // fonts don't have that glyph, so it rendered as a tofu box on real
-    // hardware. (This used to be split hex-escape literals, "\xB1" "9.4",
-    // to dodge a *different*, compile-time-only bug where C's greedy \x
-    // escape consumed the following digits too -- moot now that there's no
-    // \x escape here at all.)
-    cell(r3, 1, "ACCURACY",   "+/-9.4", ui_font.num_m, UI_C_TEXT, &t->accuracy);
-
-    lv_obj_t *r4 = row(body);
+    lv_obj_t *row2 = row(body);
     // Not using cell() here (unlike every other card on this screen) --
     // its caption is static, and this one needs to flip between "LOCAL |
     // CDT" and "LOCAL | CST" as daylight time comes and goes (see
     // ui_telemetry_set_time()), so the caption label itself needs to
     // survive past creation the same way t->local_time already does.
-    lv_obj_t *local_card = ui_card(r4);
+    lv_obj_t *local_card = ui_card(row2);
     lv_obj_set_height(local_card, LV_SIZE_CONTENT);
     lv_obj_set_flex_grow(local_card, 1);
     lv_obj_set_style_pad_hor(local_card, 20, 0);
@@ -107,12 +101,7 @@ ui_telemetry_t *ui_telemetry_create(lv_event_cb_t tab_cb)
                           LV_FLEX_ALIGN_CENTER);
     t->local_caption = ui_caption(local_card, "LOCAL | CDT");
     t->local_time = ui_label(local_card, "10:24:18", ui_font.num_m, UI_C_TEXT);
-    cell(r4, 1, "UTC", "15:24:18", ui_font.num_m, UI_C_MUTED, &t->utc_time);
-
-    lv_obj_t *r5 = row(body);
-    cell(r5, 1, "TRIP",      "12.48", ui_font.num_m, UI_C_TEXT, &t->trip);
-    cell(r5, 1, "MAX SPEED", "68.3",  ui_font.num_m, UI_C_TEXT, &t->max_speed);
-    cell(r5, 1, "MOVING",    "0:28",  ui_font.num_m, UI_C_TEXT, &t->moving);
+    cell(row2, 1, "UTC", "15:24:18", ui_font.num_m, UI_C_MUTED, &t->utc_time);
 
     /* signal --------------------------------------------------------------- */
     lv_obj_t *sig = ui_card(body);
@@ -180,40 +169,22 @@ ui_telemetry_t *ui_telemetry_create(lv_event_cb_t tab_cb)
 
 /* ------------------------------------------------------------------ setters */
 
-void ui_telemetry_set_speed(ui_telemetry_t *t, float mph)
-{
-    if (t) lv_label_set_text_fmt(t->speed, "%.1f", mph);
-}
-
-void ui_telemetry_set_heading(ui_telemetry_t *t, int deg)
-{
-    if (t) lv_label_set_text_fmt(t->heading, "%03d\xC2\xB0", ((deg % 360) + 360) % 360);
-}
-
-void ui_telemetry_set_position(ui_telemetry_t *t, const char *ddm_lat,
-                               const char *ddm_lon, double dd_lat, double dd_lon)
+void ui_telemetry_set_position(ui_telemetry_t *t, double dd_lat, double dd_lon)
 {
     if (!t) return;
-    if (ddm_lat) lv_label_set_text(t->pos_line1, ddm_lat);
-    if (ddm_lon) lv_label_set_text(t->pos_line2, ddm_lon);
     lv_label_set_text_fmt(t->pos_dd, "%.6f, %.6f | DD", dd_lat, dd_lon);
 }
 
-void ui_telemetry_set_altitude(ui_telemetry_t *t, int feet, int fpm)
+void ui_telemetry_set_vspeed(ui_telemetry_t *t, int fpm)
 {
-    if (!t) return;
-    lv_label_set_text_fmt(t->altitude, "%d ft", feet);
-    lv_label_set_text_fmt(t->vspeed, "%+d fpm", fpm);
+    if (t) lv_label_set_text_fmt(t->vspeed, "%+d fpm", fpm);
 }
 
-void ui_telemetry_set_quality(ui_telemetry_t *t, int used, int visible,
-                              float hdop, float accuracy_ft)
+void ui_telemetry_set_hdop(ui_telemetry_t *t, float hdop)
 {
     if (!t) return;
-    lv_label_set_text_fmt(t->sats, "%d/%d", used, visible);
     lv_label_set_text_fmt(t->hdop, "%.1f", hdop);
     lv_obj_set_style_text_color(t->hdop, hdop <= 1.5f ? UI_C_GREEN : UI_C_RED, 0);
-    lv_label_set_text_fmt(t->accuracy, "+/-%.1f", accuracy_ft);
 }
 
 void ui_telemetry_set_time(ui_telemetry_t *t, const char *local, const char *utc,
@@ -223,15 +194,6 @@ void ui_telemetry_set_time(ui_telemetry_t *t, const char *local, const char *utc
     if (local)     lv_label_set_text(t->local_time, local);
     if (utc)       lv_label_set_text(t->utc_time, utc);
     if (tz_abbrev) lv_label_set_text_fmt(t->local_caption, "LOCAL | %s", tz_abbrev);
-}
-
-void ui_telemetry_set_trip(ui_telemetry_t *t, float miles, float max_mph,
-                           const char *moving)
-{
-    if (!t) return;
-    lv_label_set_text_fmt(t->trip, "%.2f", miles);
-    lv_label_set_text_fmt(t->max_speed, "%.1f", max_mph);
-    if (moving) lv_label_set_text(t->moving, moving);
 }
 
 void ui_telemetry_set_signal(ui_telemetry_t *t, const uint8_t *snr,

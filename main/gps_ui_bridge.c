@@ -327,8 +327,11 @@ static void tick(void)
     // ui_home_create()'s demo value rather than being fed something fake.
 
     // ---- Telemetry screen -------------------------------------------------
-    // Same live gps_get_state() snapshot as Home, above -- reuses the speed/
-    // heading/ddm values already computed there instead of recomputing them.
+    // Trimmed down to only what Home's own cards don't already show (see
+    // ui_telemetry_create()'s comment) -- speed/heading/DDM position/trip
+    // are still computed below where something else still needs them
+    // (the trip accumulator, Home's own cards), just no longer also pushed
+    // into Telemetry setters that no longer exist.
     ui_telemetry_t *t = ui_telemetry();
     if (t) {
         ui_status_set_fix(&t->status, fix ? "GPS FIX" : "NO FIX", fix);
@@ -344,19 +347,13 @@ static void tick(void)
         bool moving_now = false;
         if (st.speed_valid) {
             speed_mph = st.speed_knots * 1.15078f;
-            ui_telemetry_set_speed(t, speed_mph);
             moving_now = speed_mph > MOVING_MPH_THRESHOLD;
             if (speed_mph > s_max_mph) s_max_mph = speed_mph;
             if (moving_now) s_moving_ticks++;
         }
 
-        ui_telemetry_set_heading(t, (int)(st.heading_deg + 0.5f));
-
         if (st.latlon_valid) {
-            char lat_buf[32], lon_buf[32];
-            format_ddm(st.latitude_deg, true, lat_buf, sizeof(lat_buf));
-            format_ddm(st.longitude_deg, false, lon_buf, sizeof(lon_buf));
-            ui_telemetry_set_position(t, lat_buf, lon_buf, st.latitude_deg, st.longitude_deg);
+            ui_telemetry_set_position(t, st.latitude_deg, st.longitude_deg);
 
             // Only add to the trip odometer while actually moving (per
             // MOVING_MPH_THRESHOLD above) -- otherwise parked GPS jitter
@@ -396,17 +393,11 @@ static void tick(void)
             }
             s_prev_alt_ft = alt_ft;
             s_have_prev_alt = true;
-            ui_telemetry_set_altitude(t, (int)(alt_ft + 0.5f), (int)(vspeed_fpm + 0.5f));
+            ui_telemetry_set_vspeed(t, (int)(vspeed_fpm + 0.5f));
         }
 
-        // "visible" is really just sats_in_use again -- GGA only reports
-        // satellites *used* in the fix, not the full visible constellation,
-        // and gps.c doesn't parse GSV (the sentence that would give per-
-        // satellite visibility/SNR) yet. Real used-count beats a frozen
-        // demo "visible" number.
         if (st.hdop_valid) {
-            ui_telemetry_set_quality(t, st.sats_in_use, st.sats_in_use,
-                                     st.hdop, hdop_to_accuracy_ft(st.hdop));
+            ui_telemetry_set_hdop(t, st.hdop);
         }
 
         // Unlike Home's single (now Central) clock, Telemetry has room for
@@ -419,16 +410,10 @@ static void tick(void)
             ui_telemetry_set_time(t, local_buf, utc_buf, tz_abbrev);
         }
 
+        // Feeds Home's trip card only now -- Telemetry's own TRIP/MAX SPEED/
+        // MOVING row is gone (see ui_telemetry_create()'s comment), this
+        // was its last use on this screen.
         uint32_t moving_s = (uint32_t)(s_moving_ticks * (TICK_PERIOD_MS / 1000.0f));
-        char moving_buf[16];
-        snprintf(moving_buf, sizeof(moving_buf), "%u:%02u",
-                 (unsigned)(moving_s / 3600), (unsigned)((moving_s % 3600) / 60));
-        ui_telemetry_set_trip(t, s_trip_miles, s_max_mph, moving_buf);
-
-        // Home's trip card, same accumulator -- see its own "h:m:s" unit
-        // label (main/ui_home.c's trip_cell() call) for why this gets
-        // seconds and Telemetry's moving_buf above doesn't; each screen
-        // formats its own string from the same underlying moving_s.
         char moving_hms_buf[16];
         snprintf(moving_hms_buf, sizeof(moving_hms_buf), "%u:%02u:%02u",
                  (unsigned)(moving_s / 3600), (unsigned)((moving_s % 3600) / 60),
