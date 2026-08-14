@@ -59,6 +59,15 @@ void ui_goto_set_recent(ui_goto_t *g, const char *name, float dist_mi, int brg);
 const char *ui_goto_get_lat(ui_goto_t *g);
 const char *ui_goto_get_lon(ui_goto_t *g);
 
+// Interprets lat_buf/lon_buf as decimal degrees per the currently selected
+// format (g->fmt) and hemisphere flags -- see ui_goto.c's parse_field() for
+// the digit-width convention each format uses (a new one; there was no
+// pre-existing parser to match, the format toggle only ever changed which
+// button was highlighted before this). Out-of-range input is clamped, not
+// rejected; returns false (leaves *out_lat/*out_lon untouched) for a NULL
+// g/out pointer, or when both fields are still empty.
+bool ui_goto_parse(ui_goto_t *g, double *out_lat, double *out_lon);
+
 /* Fires when "Start Navigation" is tapped. */
 void ui_goto_set_start_cb(ui_goto_t *g, lv_event_cb_t cb, void *user_data);
 void ui_goto_set_cancel_cb(ui_goto_t *g, lv_event_cb_t cb, void *user_data);

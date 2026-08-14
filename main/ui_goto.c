@@ -1,4 +1,5 @@
 #include "ui_goto.h"
+#include <stdlib.h>
 #include <string.h>
 
 static ui_goto_t s_goto;
@@ -94,8 +95,12 @@ ui_goto_t *ui_goto_create(lv_event_cb_t tab_cb)
 {
     ui_goto_t *g = &s_goto;
     lv_memzero(g, sizeof(*g));
-    lv_strlcpy(g->lat_buf, "32 59.6420", sizeof(g->lat_buf));
-    lv_strlcpy(g->lon_buf, "097 37.2780", sizeof(g->lon_buf));
+    // lat_buf/lon_buf start empty (lv_memzero already does that) -- used to
+    // be pre-filled with demo text ("32 59.6420"), fine while this screen
+    // was decorative, a real bug now that key_cb() appends to whatever's
+    // already in the buffer rather than replacing it: the first real digit
+    // typed would land after the leftover demo text instead of starting
+    // clean.
     g->lat_north = true;
     g->lon_east  = false;
     g->fmt       = UI_COORD_DDM;
@@ -282,6 +287,78 @@ void ui_goto_set_recent(ui_goto_t *g, const char *name, float dist_mi, int brg)
 
 const char *ui_goto_get_lat(ui_goto_t *g) { return g ? g->lat_buf : ""; }
 const char *ui_goto_get_lon(ui_goto_t *g) { return g ? g->lon_buf : ""; }
+
+// Digit-string -> decimal-degrees magnitude, format- and field-aware (lat's
+// degree field is 2 digits, max 90; lon's is 3, max 180 -- same convention
+// already used throughout this app's DDM display, e.g. gps_ui_bridge.c's
+// format_ddm()). key_cb() only ever appends bare digit characters (no
+// punctuation), so this is the first place any of these typed digits get
+// interpreted as an actual coordinate at all -- there was no pre-existing
+// convention to match, this is a new one, documented here:
+//   DDM: <deg><MM><MMMM>   -- e.g. lat "32596420" -> 32 deg, 59.6420 min
+//   DD:  <deg><DDDDDD>     -- e.g. lat "32902057"  -> 32.902057 deg
+//   DMS: <deg><MM><SS>     -- e.g. lat "325934"    -> 32 deg 59 min 34 sec
+// Fewer digits than the format needs are treated as trailing zeros (a
+// partially-typed field still parses to *something* sane); extra digits
+// beyond that are ignored. Result is clamped to the field's valid range
+// (0-90 lat, 0-180 lon) rather than rejected -- simplest well-defined
+// behavior for a fat-fingered entry, no error-dialog UI exists to reject
+// through yet.
+static double parse_field(const char *digits, ui_coord_fmt_t fmt, bool is_lat)
+{
+    int deg_w = is_lat ? 2 : 3;
+    char buf[16] = { 0 };
+    size_t n = strlen(digits);
+    if (n > sizeof(buf) - 1) n = sizeof(buf) - 1;
+    memcpy(buf, digits, n);
+    // Pad with '0' out to the format's full field width so a short/empty
+    // entry still parses instead of reading past the end of what was typed.
+    int total_w = deg_w + (fmt == UI_COORD_DMS ? 4 : 6); // DDM/DD both 6, DMS 4
+    for (size_t i = n; i < (size_t)total_w && i < sizeof(buf) - 1; i++) buf[i] = '0';
+
+    char tmp[8];
+    memcpy(tmp, buf, (size_t)deg_w); tmp[deg_w] = '\0';
+    double deg = atof(tmp);
+
+    double value;
+    if (fmt == UI_COORD_DD) {
+        memcpy(tmp, buf + deg_w, 6); tmp[6] = '\0';
+        value = deg + atof(tmp) / 1e6;
+    } else if (fmt == UI_COORD_DDM) {
+        memcpy(tmp, buf + deg_w, 2); tmp[2] = '\0';
+        double min_whole = atof(tmp);
+        memcpy(tmp, buf + deg_w + 2, 4); tmp[4] = '\0';
+        double min_frac = atof(tmp) / 1e4;
+        value = deg + (min_whole + min_frac) / 60.0;
+    } else { // UI_COORD_DMS
+        memcpy(tmp, buf + deg_w, 2); tmp[2] = '\0';
+        double min = atof(tmp);
+        memcpy(tmp, buf + deg_w + 2, 2); tmp[2] = '\0';
+        double sec = atof(tmp);
+        value = deg + min / 60.0 + sec / 3600.0;
+    }
+
+    double max = is_lat ? 90.0 : 180.0;
+    if (value < 0.0) value = 0.0;
+    if (value > max)  value = max;
+    return value;
+}
+
+bool ui_goto_parse(ui_goto_t *g, double *out_lat, double *out_lon)
+{
+    if (!g || !out_lat || !out_lon) return false;
+    // Nothing typed in either field at all -- parse_field() would happily
+    // treat that as all-zero digits and return a "valid" (0, 0), silently
+    // sending Start Navigation to the Gulf of Guinea. Refuse instead;
+    // there's no error-dialog UI to explain a bad entry through yet, so a
+    // no-op (stay on this screen) is the safest failure mode available.
+    if (g->lat_buf[0] == '\0' && g->lon_buf[0] == '\0') return false;
+    double lat = parse_field(g->lat_buf, g->fmt, true);
+    double lon = parse_field(g->lon_buf, g->fmt, false);
+    *out_lat = g->lat_north ? lat : -lat;
+    *out_lon = g->lon_east  ? lon : -lon;
+    return true;
+}
 
 void ui_goto_set_start_cb(ui_goto_t *g, lv_event_cb_t cb, void *user_data)
 {

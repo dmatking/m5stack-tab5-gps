@@ -19,6 +19,8 @@
 #include "app_settings.h"
 #include "board_interface.h"
 
+#include <stdio.h>
+
 static ui_home_t      *s_home_p;
 static ui_map_t       *s_map_p;
 static ui_nav_t       *s_nav_p;
@@ -40,8 +42,28 @@ static void tab_event_cb(lv_event_t *e)
 static void nav_map_cb(lv_event_t *e)  { LV_UNUSED(e); ui_show_tab(UI_TAB_MAP); }
 static void nav_stop_cb(lv_event_t *e) { LV_UNUSED(e); ui_set_navigating(false);
                                          ui_show_goto(); }
-static void goto_start_cb(lv_event_t *e)  { LV_UNUSED(e); ui_set_navigating(true);
-                                            ui_show_nav(); }
+// Parses whatever was typed into the Goto screen (ui_goto_parse() -- format-
+// aware, see its own comment) into a real destination, rather than the
+// screen transition alone this used to be. gps_ui_bridge.c's tick() picks
+// up ui_get_destination() from here on to compute real distance/bearing/
+// closure/ETA on the Nav screen every tick while ui_is_navigating().
+static void goto_start_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    double lat, lon;
+    // ui_goto_parse() fails (nothing to navigate to) when both fields are
+    // still empty -- stay on Goto rather than switch to Nav with a stale or
+    // nonexistent destination. No error toast/dialog exists to explain why
+    // yet, so silently declining is the best available feedback.
+    if (!ui_goto_parse(s_goto_p, &lat, &lon)) return;
+
+    ui_set_destination(lat, lon);
+    char meta[32];
+    snprintf(meta, sizeof(meta), "%.4f, %.4f", lat, lon);
+    ui_nav_set_destination(s_nav_p, "Custom Destination", meta);
+    ui_set_navigating(true);
+    ui_show_nav();
+}
 static void goto_cancel_cb(lv_event_t *e) { LV_UNUSED(e); ui_show_tab(UI_TAB_HOME); }
 
 // Settings screen's "24-hour time" switch -- real (persisted, see
@@ -76,6 +98,34 @@ static void screen_on_switch_cb(lv_event_t *e)
     app_settings_set_keep_screen_on(on);
 }
 
+// Row text for each of ui_goto.h's UI_COORD_* values, in order -- shared
+// between Settings' Coordinate format row (below) and nowhere else; Goto's
+// own format buttons have their own copy (ui_goto.c's fmt_text, a private
+// static there) since they're a fixed 3-button row, not a cycling value.
+static const char *coord_fmt_names[3] = { "DD MM.MMMM", "DD.DDDDDD", "DD MM SS" };
+
+// Settings' "value" rows (chevron on the right) all report taps through
+// this one callback, keyed by ui_setting_id_t. Only Coordinate format does
+// anything yet -- Night mode/SBAS were removed outright (nothing real to
+// wire, see their own removal commits) and Distance-speed/Elevation/Time
+// zone/Constellations/Update rate either aren't editable at all or aren't
+// built yet, so a tap on any of those is silently ignored here rather than
+// wired to something that isn't real.
+static void settings_row_cb(lv_event_t *e)
+{
+    ui_setting_id_t id = (ui_setting_id_t)(lv_uintptr_t)lv_event_get_user_data(e);
+    if (id != UI_SET_COORD_FORMAT) return;
+
+    int fmt = (app_settings_get_coord_format() + 1) % 3;
+    app_settings_set_coord_format(fmt);
+    ui_settings_set_value(s_set_p, UI_SET_COORD_FORMAT, coord_fmt_names[fmt]);
+    // Deliberately NOT touching Goto's own format toggle here -- Settings
+    // only seeds Goto's format at boot (see ui_init() below); once a
+    // session has visited Goto, only its own 3-button toggle controls it
+    // from there, so coordinate entry can always be overridden per-entry
+    // regardless of the Settings default.
+}
+
 void ui_init(void)
 {
     ui_theme_init();
@@ -104,6 +154,13 @@ void ui_init(void)
 
     ui_settings_set_screen_on(s_set_p, app_settings_get_keep_screen_on());
     ui_settings_set_screen_on_cb(s_set_p, screen_on_switch_cb);
+
+    int coord_fmt = app_settings_get_coord_format();
+    ui_settings_set_value(s_set_p, UI_SET_COORD_FORMAT, coord_fmt_names[coord_fmt]);
+    ui_settings_set_row_cb(s_set_p, settings_row_cb);
+    // Seeds Goto's format toggle only -- its own 3-button row stays freely
+    // overridable per-entry from here on, see settings_row_cb()'s comment.
+    ui_goto_set_format(s_goto_p, (ui_coord_fmt_t)coord_fmt);
 
     ui_set_navigating(false);
     // Deliberately not loading a screen here -- ui_shell.c controls the
@@ -134,6 +191,24 @@ void ui_set_navigating(bool navigating)
 }
 
 bool ui_is_navigating(void) { return s_navigating; }
+
+static double s_dest_lat, s_dest_lon;
+static bool   s_dest_valid;
+
+void ui_set_destination(double lat, double lon)
+{
+    s_dest_lat = lat;
+    s_dest_lon = lon;
+    s_dest_valid = true;
+}
+
+bool ui_get_destination(double *lat, double *lon)
+{
+    if (!s_dest_valid) return false;
+    if (lat) *lat = s_dest_lat;
+    if (lon) *lon = s_dest_lon;
+    return true;
+}
 
 ui_home_t      *ui_home(void)      { return s_home_p; }
 ui_map_t       *ui_map(void)       { return s_map_p; }

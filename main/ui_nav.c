@@ -13,7 +13,9 @@ static lv_obj_t *stat_card(lv_obj_t *parent, const char *caption,
                            lv_obj_t **out_value)
 {
     lv_obj_t *c = ui_card(parent);
-    ui_mark_placeholder(c); // every stat this screen shows is a fixed demo value -- see project notes
+    // No ui_mark_placeholder() -- all 4 uses (closure/ETA/time-to-go/speed)
+    // are real now, computed every tick by gps_ui_bridge.c's Nav section
+    // while navigating.
     lv_obj_set_height(c, LV_SIZE_CONTENT);
     lv_obj_set_flex_grow(c, 1);
     lv_obj_set_style_pad_hor(c, 20, 0);
@@ -59,7 +61,10 @@ ui_nav_t *ui_nav_create(lv_event_cb_t tab_cb)
 
     /* destination header --------------------------------------------------- */
     lv_obj_t *dest = ui_card(body);
-    ui_mark_placeholder(dest); // whole screen is demo values -- see project notes
+    // No ui_mark_placeholder() -- real once "Start Navigation" is tapped
+    // (design_ui.c's goto_start_cb() sets it from the parsed destination).
+    // Still shows this creation-time demo text until that first happens,
+    // same as every other still-real screen's pre-tick placeholder values.
     lv_obj_set_width(dest, LV_PCT(100));
     lv_obj_set_height(dest, LV_SIZE_CONTENT);
     lv_obj_set_style_pad_hor(dest, 20, 0);
@@ -79,7 +84,7 @@ ui_nav_t *ui_nav_create(lv_event_cb_t tab_cb)
 
     /* bearing rose --------------------------------------------------------- */
     lv_obj_t *rose = ui_card(body);
-    ui_mark_placeholder(rose);
+    // No ui_mark_placeholder() -- real, see the "distance to go" card below.
     lv_obj_set_width(rose, LV_PCT(100));
     lv_obj_set_height(rose, LV_SIZE_CONTENT);
     lv_obj_set_style_pad_all(rose, 14, 0);
@@ -139,7 +144,10 @@ ui_nav_t *ui_nav_create(lv_event_cb_t tab_cb)
 
     /* distance to go ------------------------------------------------------- */
     lv_obj_t *dist = ui_card(body);
-    ui_mark_placeholder(dist);
+    // No ui_mark_placeholder() -- real, gps_ui_bridge.c's Nav section
+    // computes distance/bearing/closure/ETA fresh every tick while
+    // navigating (see its own file header comment). Cross track (below)
+    // is the one card on this whole screen still fake.
     lv_obj_set_width(dist, LV_PCT(100));
     lv_obj_set_height(dist, LV_SIZE_CONTENT);
     lv_obj_set_style_pad_hor(dist, 22, 0);
@@ -171,6 +179,10 @@ ui_nav_t *ui_nav_create(lv_event_cb_t tab_cb)
 
     /* cross track ---------------------------------------------------------- */
     lv_obj_t *xtk = ui_card(body);
+    // Still fake -- every other card on this screen is real now (see their
+    // own comments), but cross-track (how far off the direct course line)
+    // needs the position navigation *started* from to define that line,
+    // state gps_ui_bridge.c doesn't keep yet. Not attempted here.
     ui_mark_placeholder(xtk);
     lv_obj_set_width(xtk, LV_PCT(100));
     lv_obj_set_height(xtk, LV_SIZE_CONTENT);

@@ -29,19 +29,32 @@ static const char *TAG = "GPS_UI_BRIDGE";
 
 #define TICK_PERIOD_MS 500
 
-// "32° 54.1234' N" / "097° 19.5678' W" -- latitude degrees are 2 digits
-// (max 90), longitude 3 (max 180), matching the mockup's own formatting.
-static void format_ddm(double decimal_deg, bool is_lat, char *out, size_t out_size)
+// Formats one coordinate value per fmt (matches app_settings_get_coord_format()'s
+// numbering, == ui_goto.h's ui_coord_fmt_t): 0=DD MM.MMMM (the original,
+// only format this app had until Settings' Coordinate format row went from
+// decorative to real), 1=DD.DDDDDD, 2=DD MM SS. Latitude degrees are 2
+// digits (max 90), longitude 3 (max 180), matching the mockup's own
+// original DDM formatting -- kept for the other two formats too, for the
+// same reason: "097" not "97" reads as unambiguously 3-digit-wide at a
+// glance, "32" doesn't need to.
+static void format_coord(double decimal_deg, bool is_lat, int fmt, char *out, size_t out_size)
 {
     double a = fabs(decimal_deg);
     int deg = (int)a;
-    double min = (a - deg) * 60.0;
     char hemi = is_lat ? (decimal_deg >= 0 ? 'N' : 'S')
                         : (decimal_deg >= 0 ? 'E' : 'W');
-    if (is_lat) {
-        snprintf(out, out_size, "%d\xC2\xB0 %07.4f' %c", deg, min, hemi);
-    } else {
-        snprintf(out, out_size, "%03d\xC2\xB0 %07.4f' %c", deg, min, hemi);
+    if (fmt == 1) { // DD.DDDDDD
+        snprintf(out, out_size, "%.6f\xC2\xB0 %c", a, hemi);
+    } else if (fmt == 2) { // DD MM SS
+        double min_full = (a - deg) * 60.0;
+        int min = (int)min_full;
+        double sec = (min_full - min) * 60.0;
+        if (is_lat) snprintf(out, out_size, "%d\xC2\xB0 %02d' %04.1f\" %c", deg, min, sec, hemi);
+        else        snprintf(out, out_size, "%03d\xC2\xB0 %02d' %04.1f\" %c", deg, min, sec, hemi);
+    } else { // fmt == 0, DD MM.MMMM
+        double min = (a - deg) * 60.0;
+        if (is_lat) snprintf(out, out_size, "%d\xC2\xB0 %07.4f' %c", deg, min, hemi);
+        else        snprintf(out, out_size, "%03d\xC2\xB0 %07.4f' %c", deg, min, hemi);
     }
 }
 
@@ -209,7 +222,8 @@ static void format_clock_split(char *hms_out, size_t hms_size,
 }
 
 // Great-circle distance between two WGS84 points, in miles. Used by the
-// Telemetry trip accumulator below -- nothing else in this file needs it.
+// Telemetry trip accumulator below and, since Goto/Nav went from decorative
+// to real, the Nav screen's distance-to-destination too.
 static float haversine_miles(double lat1, double lon1, double lat2, double lon2)
 {
     const double r_mi = 3958.8;
@@ -221,6 +235,20 @@ static float haversine_miles(double lat1, double lon1, double lat2, double lon2)
              + cos(phi1) * cos(phi2) * sin(dlambda / 2.0) * sin(dlambda / 2.0);
     double c = 2.0 * atan2(sqrt(a), sqrt(1.0 - a));
     return (float)(r_mi * c);
+}
+
+// Initial great-circle bearing from point 1 to point 2, degrees true,
+// 0-360. Standard forward-azimuth formula -- only the Nav screen needs this
+// (Telemetry/Home's trip odometer only ever needed distance).
+static float bearing_deg(double lat1, double lon1, double lat2, double lon2)
+{
+    double phi1 = lat1 * (GPS_UI_PI / 180.0);
+    double phi2 = lat2 * (GPS_UI_PI / 180.0);
+    double dlambda = (lon2 - lon1) * (GPS_UI_PI / 180.0);
+    double y = sin(dlambda) * cos(phi2);
+    double x = cos(phi1) * sin(phi2) - sin(phi1) * cos(phi2) * cos(dlambda);
+    double theta = atan2(y, x) * (180.0 / GPS_UI_PI);
+    return (float)fmod(theta + 360.0, 360.0);
 }
 
 // Telemetry's (and now Home's, see ui_home_set_trip() below) trip/max-speed/
@@ -294,9 +322,10 @@ static void tick(void)
     }
 
     if (st.latlon_valid) {
+        int coord_fmt = app_settings_get_coord_format();
         char lat_buf[32], lon_buf[32];
-        format_ddm(st.latitude_deg, true, lat_buf, sizeof(lat_buf));
-        format_ddm(st.longitude_deg, false, lon_buf, sizeof(lon_buf));
+        format_coord(st.latitude_deg, true, coord_fmt, lat_buf, sizeof(lat_buf));
+        format_coord(st.longitude_deg, false, coord_fmt, lon_buf, sizeof(lon_buf));
         ui_home_set_position(h, lat_buf, lon_buf);
     }
 
@@ -488,6 +517,58 @@ static void tick(void)
 
         ui_telemetry_set_signal(t, sig_snr, sig_has_snr, sig_const, sig_used,
                                 n, sats_used_total, const_buf);
+    }
+
+    // ---- Nav screen (active navigation) ------------------------------------
+    // Goto/Nav went from decorative to real (see design_ui.c's goto_start_cb(),
+    // which wires ui_goto_parse() into ui_set_destination()) -- distance/
+    // bearing/closure/ETA computed fresh every tick from the live position
+    // and whatever destination was set when "Start Navigation" was tapped.
+    // Cross-track (how far off the direct course line) deliberately NOT
+    // computed -- would need storing the position navigation started from
+    // to define that line, separate state this doesn't have yet;
+    // ui_nav_create()'s own demo value is left alone rather than faked with
+    // a real-looking number that isn't.
+    ui_nav_t *nav_ui = ui_nav();
+    double dest_lat, dest_lon;
+    if (nav_ui && ui_is_navigating() && st.latlon_valid &&
+        ui_get_destination(&dest_lat, &dest_lon)) {
+        float dist_mi = haversine_miles(st.latitude_deg, st.longitude_deg, dest_lat, dest_lon);
+        float brg = bearing_deg(st.latitude_deg, st.longitude_deg, dest_lat, dest_lon);
+        int heading = (int)(st.heading_deg + 0.5f);
+        float nav_speed_mph = st.speed_valid ? st.speed_knots * 1.15078f : 0.0f;
+
+        ui_nav_set_bearing(nav_ui, (int)(brg + 0.5f), heading);
+        ui_nav_set_distance(nav_ui, dist_mi);
+        ui_nav_set_speed(nav_ui, nav_speed_mph);
+
+        // Velocity made good -- current speed projected onto the bearing
+        // to the destination, so it reads near-zero/negative when moving
+        // across or away from it instead of always showing full raw speed
+        // regardless of direction actually traveled.
+        float angle_diff = (float)((brg - heading) * (GPS_UI_PI / 180.0));
+        float vmg_mph = nav_speed_mph * cosf(angle_diff);
+        ui_nav_set_closure(nav_ui, vmg_mph);
+
+        if (vmg_mph > 0.5f) {
+            float hours_to_go = dist_mi / vmg_mph;
+            uint32_t secs_to_go = (uint32_t)(hours_to_go * 3600.0f);
+            char time_to_go[16];
+            snprintf(time_to_go, sizeof(time_to_go), "%u:%02u",
+                     (unsigned)(secs_to_go / 3600), (unsigned)((secs_to_go % 3600) / 60));
+            char eta_text[16] = "--:--";
+            if (have_local) {
+                // Simple minutes-of-day add-and-wrap, same spirit as this
+                // file's other clock math -- fine for a same-day ETA
+                // display, not a real calendar-aware add.
+                int total_min = local_tm.tm_hour * 60 + local_tm.tm_min + (int)(hours_to_go * 60.0f);
+                total_min = ((total_min % 1440) + 1440) % 1440;
+                snprintf(eta_text, sizeof(eta_text), "%d:%02d", total_min / 60, total_min % 60);
+            }
+            ui_nav_set_eta(nav_ui, eta_text, time_to_go);
+        } else {
+            ui_nav_set_eta(nav_ui, "--:--", "--:--");
+        }
     }
 
     // ---- Settings screen ---------------------------------------------------

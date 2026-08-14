@@ -46,6 +46,15 @@ void app_settings_set_brightness(int percent);
 bool app_settings_get_keep_screen_on(void);
 void app_settings_set_keep_screen_on(bool on);
 
+// Coordinate display/entry format: 0=DD MM.MMMM, 1=DD.DDDDDD, 2=DD MM SS --
+// matches ui_goto.h's ui_coord_fmt_t numeric values exactly (deliberately
+// not typed as that enum here, to keep this lower-level file independent
+// of UI-layer headers; callers cast). Feeds Home's position card display
+// and seeds Goto's format toggle at boot -- Goto's own toggle stays freely
+// overridable per-entry from there, this only sets where it starts.
+int app_settings_get_coord_format(void);
+void app_settings_set_coord_format(int fmt);
+
 #ifdef __cplusplus
 }
 #endif

@@ -32,6 +32,14 @@ void ui_show_nav(void);
 void ui_set_navigating(bool navigating);
 bool ui_is_navigating(void);
 
+// The active navigation target -- set by design_ui.c's goto_start_cb() (via
+// ui_goto_parse()) when "Start Navigation" is tapped, read by
+// gps_ui_bridge.c's tick() every tick while ui_is_navigating() to compute
+// real distance/bearing/closure/ETA to it. get returns false (leaves *lat/
+// *lon untouched) if nothing's been set yet this boot.
+void ui_set_destination(double lat, double lon);
+bool ui_get_destination(double *lat, double *lon);
+
 ui_home_t      *ui_home(void);
 ui_map_t       *ui_map(void);
 ui_nav_t       *ui_nav(void);
