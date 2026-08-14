@@ -30,10 +30,13 @@ typedef struct {
     lv_obj_t *turn;
 
     lv_obj_t *distance;
+    lv_obj_t *distance_unit;  /* "mi"/"km" */
     lv_obj_t *closure;
+    lv_obj_t *closure_unit;   /* "mph"/"km/h" */
     lv_obj_t *eta;
     lv_obj_t *time_to_go;
     lv_obj_t *speed;
+    lv_obj_t *speed_unit;     /* "mph"/"km/h" */
 
     lv_obj_t *xtk_label;      /* "0.12 mi left · closing" */
     lv_obj_t *xtk_dot;
@@ -51,10 +54,12 @@ void ui_nav_set_destination(ui_nav_t *n, const char *name, const char *meta);
 /* Relative bearing: the arrow points at (bearing - heading). */
 void ui_nav_set_bearing(ui_nav_t *n, int bearing_deg, int heading_deg);
 
-void ui_nav_set_distance(ui_nav_t *n, float miles);
-void ui_nav_set_closure(ui_nav_t *n, float vmg_mph);
+// distance/vmg/speed are already converted; unit is "mi"/"km" (distance) or
+// "mph"/"km/h" (closure, speed) per app_settings_get_distance_km().
+void ui_nav_set_distance(ui_nav_t *n, float distance, const char *unit);
+void ui_nav_set_closure(ui_nav_t *n, float vmg, const char *unit);
 void ui_nav_set_eta(ui_nav_t *n, const char *eta_text, const char *time_to_go);
-void ui_nav_set_speed(ui_nav_t *n, float mph);
+void ui_nav_set_speed(ui_nav_t *n, float speed, const char *unit);
 
 /* offset_mi: negative = left of course, positive = right. Full-scale ±0.5 mi. */
 void ui_nav_set_cross_track(ui_nav_t *n, float offset_mi, bool closing);

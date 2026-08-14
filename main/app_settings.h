@@ -55,6 +55,18 @@ void app_settings_set_keep_screen_on(bool on);
 int app_settings_get_coord_format(void);
 void app_settings_set_coord_format(int fmt);
 
+// Distance/speed unit: false = mi/mph (default), true = km/h. Applies to
+// Home's SPEED/TRIP cards and the Nav screen's distance/speed/closure.
+bool app_settings_get_distance_km(void);
+void app_settings_set_distance_km(bool km);
+
+// Elevation unit: false = feet (default), true = meters. Applies to Home's
+// ALTITUDE/GPS ACCURACY/TRIP elevation-gain and Telemetry's VERTICAL SPEED
+// (feet-per-minute becomes meters-per-minute -- same axis, a rate of
+// elevation change, not a second independent unit choice).
+bool app_settings_get_elevation_m(void);
+void app_settings_set_elevation_m(bool meters);
+
 #ifdef __cplusplus
 }
 #endif

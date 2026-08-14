@@ -120,8 +120,11 @@ ui_settings_t *ui_settings_create(lv_event_cb_t tab_cb)
     s->sw_screen_on = row_switch(g1, "Keep screen on", true);
 
     /* units ---------------------------------------------------------------- */
+    // No ui_mark_placeholder() -- the last group on this screen to go real.
+    // Distance/speed and Elevation are persisted 2-way cycles (see
+    // design_ui.c's settings_row_cb()/app_settings.h); Coordinate format
+    // and 24-hour time were already real.
     lv_obj_t *g2 = group(body, "UNITS & FORMAT");
-    ui_mark_placeholder(g2); // see g1's comment above -- catches the real 24h-time row too
     row_value(g2, "Distance / speed", "mi / mph", UI_C_BLUE, UI_SET_UNITS,
               &s->value[UI_SET_UNITS]);
     ui_divider(g2);

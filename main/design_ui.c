@@ -105,25 +105,33 @@ static void screen_on_switch_cb(lv_event_t *e)
 static const char *coord_fmt_names[3] = { "DD MM.MMMM", "DD.DDDDDD", "DD MM SS" };
 
 // Settings' "value" rows (chevron on the right) all report taps through
-// this one callback, keyed by ui_setting_id_t. Only Coordinate format does
-// anything yet -- Night mode/SBAS were removed outright (nothing real to
-// wire, see their own removal commits) and Distance-speed/Elevation/Time
-// zone/Constellations/Update rate either aren't editable at all or aren't
-// built yet, so a tap on any of those is silently ignored here rather than
-// wired to something that isn't real.
+// this one callback, keyed by ui_setting_id_t. Coordinate format,
+// Distance/speed, and Elevation are real (each a 2-3 way cycle, persisted
+// via app_settings.h) -- Night mode/SBAS were removed outright (nothing
+// real to wire, see their own removal commits) and Time zone/
+// Constellations/Update rate are real read-only *displays*
+// (gps_ui_bridge.c), not editable, so a tap on those is silently ignored.
 static void settings_row_cb(lv_event_t *e)
 {
     ui_setting_id_t id = (ui_setting_id_t)(lv_uintptr_t)lv_event_get_user_data(e);
-    if (id != UI_SET_COORD_FORMAT) return;
-
-    int fmt = (app_settings_get_coord_format() + 1) % 3;
-    app_settings_set_coord_format(fmt);
-    ui_settings_set_value(s_set_p, UI_SET_COORD_FORMAT, coord_fmt_names[fmt]);
-    // Deliberately NOT touching Goto's own format toggle here -- Settings
-    // only seeds Goto's format at boot (see ui_init() below); once a
-    // session has visited Goto, only its own 3-button toggle controls it
-    // from there, so coordinate entry can always be overridden per-entry
-    // regardless of the Settings default.
+    if (id == UI_SET_COORD_FORMAT) {
+        int fmt = (app_settings_get_coord_format() + 1) % 3;
+        app_settings_set_coord_format(fmt);
+        ui_settings_set_value(s_set_p, UI_SET_COORD_FORMAT, coord_fmt_names[fmt]);
+        // Deliberately NOT touching Goto's own format toggle here -- Settings
+        // only seeds Goto's format at boot (see ui_init() below); once a
+        // session has visited Goto, only its own 3-button toggle controls it
+        // from there, so coordinate entry can always be overridden per-entry
+        // regardless of the Settings default.
+    } else if (id == UI_SET_UNITS) {
+        bool km = !app_settings_get_distance_km();
+        app_settings_set_distance_km(km);
+        ui_settings_set_value(s_set_p, UI_SET_UNITS, km ? "km / km/h" : "mi / mph");
+    } else if (id == UI_SET_ELEVATION) {
+        bool m = !app_settings_get_elevation_m();
+        app_settings_set_elevation_m(m);
+        ui_settings_set_value(s_set_p, UI_SET_ELEVATION, m ? "meters" : "feet");
+    }
 }
 
 void ui_init(void)
@@ -157,6 +165,12 @@ void ui_init(void)
 
     int coord_fmt = app_settings_get_coord_format();
     ui_settings_set_value(s_set_p, UI_SET_COORD_FORMAT, coord_fmt_names[coord_fmt]);
+
+    bool dist_km = app_settings_get_distance_km();
+    ui_settings_set_value(s_set_p, UI_SET_UNITS, dist_km ? "km / km/h" : "mi / mph");
+    bool elev_m = app_settings_get_elevation_m();
+    ui_settings_set_value(s_set_p, UI_SET_ELEVATION, elev_m ? "meters" : "feet");
+
     ui_settings_set_row_cb(s_set_p, settings_row_cb);
     // Seeds Goto's format toggle only -- its own 3-button row stays freely
     // overridable per-entry from here on, see settings_row_cb()'s comment.

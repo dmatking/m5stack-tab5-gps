@@ -175,9 +175,9 @@ void ui_telemetry_set_position(ui_telemetry_t *t, double dd_lat, double dd_lon)
     lv_label_set_text_fmt(t->pos_dd, "%.6f, %.6f | DD", dd_lat, dd_lon);
 }
 
-void ui_telemetry_set_vspeed(ui_telemetry_t *t, int fpm)
+void ui_telemetry_set_vspeed(ui_telemetry_t *t, int value, const char *unit)
 {
-    if (t) lv_label_set_text_fmt(t->vspeed, "%+d fpm", fpm);
+    if (t) lv_label_set_text_fmt(t->vspeed, "%+d %s", value, unit ? unit : "fpm");
 }
 
 void ui_telemetry_set_hdop(ui_telemetry_t *t, float hdop)

@@ -76,6 +76,20 @@ static float hdop_to_accuracy_ft(float hdop)
     return hdop * uere_m * 3.28084f;
 }
 
+// ---- Distance/speed and Elevation unit conversion ----------------------
+// Every computation in this file works in mph/mi/ft internally (matching
+// gps.c's own knots/meters -> mph/ft conversions that predate this feature)
+// -- these convert to km/h/km/m only at the point a value is handed to a
+// screen setter, per app_settings_get_distance_km()/_get_elevation_m().
+// Kept as tiny wrappers rather than inlining the constants at each call
+// site, so the mi->km/ft->m factors exist in exactly one place each.
+static float conv_speed_mph(float mph, bool km)    { return km ? mph * 1.609344f : mph; }
+static float conv_dist_mi(float mi, bool km)        { return km ? mi * 1.609344f : mi; }
+static float conv_elev_ft(float ft, bool m)         { return m  ? ft * 0.3048f   : ft; }
+static const char *speed_unit_str(bool km) { return km ? "km/h" : "mph"; }
+static const char *dist_unit_str(bool km)  { return km ? "km"   : "mi"; }
+static const char *elev_unit_str(bool m)   { return m  ? "m"    : "ft"; }
+
 // Not relying on M_PI from math.h -- see the identical comment/pattern in
 // main/map_view.c's MAP_PI, same reasoning (avoid a feature-test-macro
 // dependency for one constant used in exactly one place here too).
@@ -329,8 +343,12 @@ static void tick(void)
         ui_home_set_position(h, lat_buf, lon_buf);
     }
 
+    bool dist_km = app_settings_get_distance_km();
+    bool elev_m  = app_settings_get_elevation_m();
+
     if (st.speed_valid) {
-        ui_home_set_speed(h, st.speed_knots * 1.15078f);
+        float mph = st.speed_knots * 1.15078f;
+        ui_home_set_speed(h, conv_speed_mph(mph, dist_km), speed_unit_str(dist_km));
     }
 
     // heading_deg comes from RMC and is only meaningful in motion -- GPS
@@ -340,11 +358,13 @@ static void tick(void)
     ui_home_set_heading(h, (int)(st.heading_deg + 0.5f), cardinal_8(st.heading_deg));
 
     if (st.altitude_valid) {
-        ui_home_set_altitude(h, (int)(st.altitude_m * 3.28084f + 0.5f));
+        float alt_ft = st.altitude_m * 3.28084f;
+        ui_home_set_altitude(h, (int)(conv_elev_ft(alt_ft, elev_m) + 0.5f), elev_unit_str(elev_m));
     }
 
     if (st.hdop_valid) {
-        ui_home_set_accuracy(h, hdop_to_accuracy_ft(st.hdop));
+        float acc_ft = hdop_to_accuracy_ft(st.hdop);
+        ui_home_set_accuracy(h, conv_elev_ft(acc_ft, elev_m), elev_unit_str(elev_m));
     }
 
     const char *sat_quality = st.sats_in_use >= 7 ? "Good"
@@ -437,7 +457,11 @@ static void tick(void)
             }
             s_prev_alt_ft = alt_ft;
             s_have_prev_alt = true;
-            ui_telemetry_set_vspeed(t, (int)(vspeed_fpm + 0.5f));
+            // Same axis as elevation (a rate of elevation change), so it
+            // follows app_settings_get_elevation_m() too -- fpm becomes
+            // m/min rather than being a separate unit choice of its own.
+            float vspeed_disp = elev_m ? vspeed_fpm * 0.3048f : vspeed_fpm;
+            ui_telemetry_set_vspeed(t, (int)(vspeed_disp + 0.5f), elev_m ? "m/min" : "fpm");
         }
 
         if (st.hdop_valid) {
@@ -467,8 +491,10 @@ static void tick(void)
             float moving_hours = s_moving_ticks * (TICK_PERIOD_MS / 1000.0f) / 3600.0f;
             avg_mph = s_trip_miles / moving_hours;
         }
-        ui_home_set_trip(h, s_trip_miles, moving_hms_buf, avg_mph, s_max_mph,
-                         (int)(s_elev_gain_ft + 0.5f));
+        ui_home_set_trip(h, conv_dist_mi(s_trip_miles, dist_km), moving_hms_buf,
+                         conv_speed_mph(avg_mph, dist_km), conv_speed_mph(s_max_mph, dist_km),
+                         (int)(conv_elev_ft(s_elev_gain_ft, elev_m) + 0.5f),
+                         dist_unit_str(dist_km), speed_unit_str(dist_km), elev_unit_str(elev_m));
 
         // Signal bars -- one per satellite gps.c's GSV/GSA parsing currently
         // has in view, real SNR/constellation/used-in-solution per bar. See
@@ -539,8 +565,8 @@ static void tick(void)
         float nav_speed_mph = st.speed_valid ? st.speed_knots * 1.15078f : 0.0f;
 
         ui_nav_set_bearing(nav_ui, (int)(brg + 0.5f), heading);
-        ui_nav_set_distance(nav_ui, dist_mi);
-        ui_nav_set_speed(nav_ui, nav_speed_mph);
+        ui_nav_set_distance(nav_ui, conv_dist_mi(dist_mi, dist_km), dist_unit_str(dist_km));
+        ui_nav_set_speed(nav_ui, conv_speed_mph(nav_speed_mph, dist_km), speed_unit_str(dist_km));
 
         // Velocity made good -- current speed projected onto the bearing
         // to the destination, so it reads near-zero/negative when moving
@@ -548,7 +574,7 @@ static void tick(void)
         // regardless of direction actually traveled.
         float angle_diff = (float)((brg - heading) * (GPS_UI_PI / 180.0));
         float vmg_mph = nav_speed_mph * cosf(angle_diff);
-        ui_nav_set_closure(nav_ui, vmg_mph);
+        ui_nav_set_closure(nav_ui, conv_speed_mph(vmg_mph, dist_km), speed_unit_str(dist_km));
 
         if (vmg_mph > 0.5f) {
             float hours_to_go = dist_mi / vmg_mph;
@@ -572,17 +598,14 @@ static void tick(void)
     }
 
     // ---- Settings screen ---------------------------------------------------
-    // DISPLAY (brightness/keep-screen-on) and LOGGING & STORAGE are fully
-    // real (set earlier/below). Constellations/Update rate/Time zone below
+    // DISPLAY (brightness/keep-screen-on), LOGGING & STORAGE, and UNITS &
+    // FORMAT (coordinate format, distance/speed, elevation, 24-hour time)
+    // are all fully real now. Constellations/Update rate/Time zone below
     // are real *displays* of measured/computed values, not editable
     // settings -- this app has no write path to the GPS module to actually
     // reconfigure its constellations or update rate (TX line wired but
     // unused, see gps.c's file header), and Time zone is Central-only by
     // design (see us_central_from_utc()'s own comment), not a picker.
-    // Units, coordinate format, and Night mode stay decorative -- those
-    // would need a global unit-preference threaded through every display
-    // site (Home/Telemetry/Nav), a genuinely separate, larger piece of
-    // work, not attempted here.
     ui_settings_t *set_ui = ui_settings();
     if (set_ui) {
         ui_settings_set_track_log(set_ui, gps_log_active());

@@ -42,7 +42,9 @@ ui_telemetry_t *ui_telemetry_create(lv_event_cb_t tab_cb);
 
 /* ---- setters ------------------------------------------------------------ */
 void ui_telemetry_set_position(ui_telemetry_t *t, double dd_lat, double dd_lon);
-void ui_telemetry_set_vspeed(ui_telemetry_t *t, int fpm);
+// value is already converted; unit is "fpm" or "m/min" per
+// app_settings_get_elevation_m().
+void ui_telemetry_set_vspeed(ui_telemetry_t *t, int value, const char *unit);
 void ui_telemetry_set_hdop(ui_telemetry_t *t, float hdop);
 // tz_abbrev updates the LOCAL card's own caption ("LOCAL | CDT"/"LOCAL |
 // CST") -- see gps_ui_bridge.c's us_central_from_utc(), which flips it

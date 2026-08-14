@@ -10,7 +10,8 @@ static ui_home_t s_home;
 static lv_obj_t *metric_card(lv_obj_t *parent, int grow, const char *caption,
                              const char *value, const lv_font_t *value_font,
                              const char *unit, lv_color_t value_color,
-                             lv_coord_t top_pad, lv_obj_t **out_value)
+                             lv_coord_t top_pad, lv_obj_t **out_value,
+                             lv_obj_t **out_unit)
 {
     lv_obj_t *c = ui_card(parent);
     lv_obj_set_height(c, LV_PCT(100));
@@ -26,7 +27,10 @@ static lv_obj_t *metric_card(lv_obj_t *parent, int grow, const char *caption,
     }
     lv_obj_t *v = ui_label(c, value, value_font, value_color);
     if (out_value) *out_value = v;
-    if (unit) ui_label(c, unit, ui_font.s, UI_C_MUTED);
+    if (unit) {
+        lv_obj_t *u = ui_label(c, unit, ui_font.s, UI_C_MUTED);
+        if (out_unit) *out_unit = u;
+    }
     return c;
 }
 
@@ -39,7 +43,7 @@ static lv_obj_t *metric_card(lv_obj_t *parent, int grow, const char *caption,
  * value/unit move down to match. */
 static void trip_cell(lv_obj_t *parent, const char *caption, const char *value,
                       const char *unit, bool left_rule, bool one_line_caption,
-                      lv_obj_t **out_value)
+                      lv_obj_t **out_value, lv_obj_t **out_unit)
 {
     lv_obj_t *cell = ui_box(parent);
     lv_obj_set_height(cell, LV_SIZE_CONTENT);
@@ -65,7 +69,8 @@ static void trip_cell(lv_obj_t *parent, const char *caption, const char *value,
         lv_obj_set_size(spacer, 1, 22); // ~one ui_font.xs line, matched against a real capture
     }
     *out_value = ui_label(cell, value, ui_font.semi_m, UI_C_TEXT);
-    ui_label(cell, unit, ui_font.xs, UI_C_MUTED);
+    lv_obj_t *u = ui_label(cell, unit, ui_font.xs, UI_C_MUTED);
+    if (out_unit) *out_unit = u;
 }
 
 static void track_btn_cb(lv_event_t *e)
@@ -100,8 +105,9 @@ static void reset_confirm_yes_cb(lv_event_t *e)
     if (h->reset_trip_cb) h->reset_trip_cb(); // zeroes gps_ui_bridge.c's real accumulator
     // Instant feedback -- the next tick would repaint these anyway once the
     // accumulator above is actually zeroed, but no reason to make the user
-    // wait up to a tick period to see it took effect.
-    ui_home_set_trip(h, 0.0f, "0:00:00", 0.0f, 0.0f, 0);
+    // wait up to a tick period to see it took effect. Units unchanged, so
+    // pass NULL for all three unit strings rather than re-deriving them here.
+    ui_home_set_trip(h, 0.0f, "0:00:00", 0.0f, 0.0f, 0, NULL, NULL, NULL);
     reset_confirm_close();
 }
 
@@ -212,7 +218,7 @@ ui_home_t *ui_home_create(lv_event_cb_t tab_cb)
     // confirmed via a photographed-alignment comparison. Not derived from
     // exact font metrics, just measured/adjusted against a real capture.
     metric_card(row1, 10, "SPEED", "42", ui_font.num_l, "mph", UI_C_TEXT,
-                49, &h->speed);
+                49, &h->speed, &h->speed_unit);
 
     lv_obj_t *hcard = ui_card(row1);
     lv_obj_set_height(hcard, LV_PCT(100));
@@ -224,7 +230,7 @@ ui_home_t *ui_home_create(lv_event_cb_t tab_cb)
     ui_compass(hcard, 180, &h->heading_val, &h->heading_sub);
 
     metric_card(row1, 10, "ALTITUDE", "1,248", ui_font.num_l, "ft", UI_C_TEXT,
-                49, &h->altitude);
+                49, &h->altitude, &h->altitude_unit);
 
     /* satellites / accuracy / time --------------------------------------- */
     lv_obj_t *row2 = ui_box(body);
@@ -302,15 +308,15 @@ ui_home_t *ui_home_create(lv_event_cb_t tab_cb)
     lv_obj_t *cells = ui_box(trip);
     lv_obj_set_size(cells, LV_PCT(100), LV_SIZE_CONTENT);
     ui_flex_row(cells, 0);
-    trip_cell(cells, "DISTANCE",    "12.48",   "mi",    false, true,  &h->trip_distance);
-    trip_cell(cells, "MOVING",      "0:28:47", "h:m:s", true,  true,  &h->trip_moving);
+    trip_cell(cells, "DISTANCE",    "12.48",   "mi",    false, true,  &h->trip_distance, &h->trip_distance_unit);
+    trip_cell(cells, "MOVING",      "0:28:47", "h:m:s", true,  true,  &h->trip_moving, NULL);
     // Two lines each (was one, cramped) -- same words, just wrapped, not
     // abbreviated. SPEED first (not AVG/MAX first) so the shared word lines
     // up between these two adjacent cells, with the distinguishing word
     // underneath.
-    trip_cell(cells, "SPEED\nAVG",  "25.9",    "mph",   true,  false, &h->trip_avg);
-    trip_cell(cells, "SPEED\nMAX",  "68.3",    "mph",   true,  false, &h->trip_max);
-    trip_cell(cells, "ELEV\nGAIN",  "512",     "ft",    true,  false, &h->trip_gain);
+    trip_cell(cells, "SPEED\nAVG",  "25.9",    "mph",   true,  false, &h->trip_avg, &h->trip_avg_unit);
+    trip_cell(cells, "SPEED\nMAX",  "68.3",    "mph",   true,  false, &h->trip_max, &h->trip_max_unit);
+    trip_cell(cells, "ELEV\nGAIN",  "512",     "ft",    true,  false, &h->trip_gain, &h->trip_gain_unit);
 
     /* Below the card, not inside it -- same footprint as Start Tracking
      * below, just a secondary/destructive action (outline + red, matching
@@ -342,19 +348,27 @@ void ui_home_set_position(ui_home_t *h, const char *lat, const char *lon)
     lv_label_set_text(h->pos_line2, lon);
 }
 
-void ui_home_set_accuracy(ui_home_t *h, float feet)
+void ui_home_set_accuracy(ui_home_t *h, float value, const char *unit)
 {
     if (!h) return;
-    lv_label_set_text_fmt(h->acc_val, "+/- %.1f ft", feet);
-    const char *q = feet <= 16.0f ? "Good" : (feet <= 40.0f ? "Fair" : "Poor");
+    lv_label_set_text_fmt(h->acc_val, "+/- %.1f %s", value, unit ? unit : "ft");
+    // Quality thresholds are unit-specific -- 16ft/40ft in feet, converted
+    // to their meter equivalents (~4.9m/~12.2m) when in meters, so "Good"/
+    // "Fair"/"Poor" mean the same real-world accuracy either way.
+    bool is_m = unit && unit[0] == 'm' && unit[1] == '\0';
+    float good = is_m ? 4.9f : 16.0f;
+    float fair = is_m ? 12.2f : 40.0f;
+    const char *q = value <= good ? "Good" : (value <= fair ? "Fair" : "Poor");
     lv_label_set_text(h->acc_quality, q);
     lv_obj_set_style_text_color(h->acc_quality,
-                                feet <= 16.0f ? UI_C_MUTED : UI_C_RED, 0);
+                                value <= good ? UI_C_MUTED : UI_C_RED, 0);
 }
 
-void ui_home_set_speed(ui_home_t *h, float mph)
+void ui_home_set_speed(ui_home_t *h, float speed, const char *unit)
 {
-    if (h) lv_label_set_text_fmt(h->speed, "%d", (int)(mph + 0.5f));
+    if (!h) return;
+    lv_label_set_text_fmt(h->speed, "%d", (int)(speed + 0.5f));
+    if (unit) lv_label_set_text(h->speed_unit, unit);
 }
 
 void ui_home_set_heading(ui_home_t *h, int deg, const char *cardinal)
@@ -362,10 +376,11 @@ void ui_home_set_heading(ui_home_t *h, int deg, const char *cardinal)
     if (h) ui_compass_set_heading(h->heading_val, h->heading_sub, deg, cardinal);
 }
 
-void ui_home_set_altitude(ui_home_t *h, int feet)
+void ui_home_set_altitude(ui_home_t *h, int altitude, const char *unit)
 {
     if (!h) return;
-    lv_label_set_text_fmt(h->altitude, "%d", feet);
+    lv_label_set_text_fmt(h->altitude, "%d", altitude);
+    if (unit) lv_label_set_text(h->altitude_unit, unit);
 }
 
 void ui_home_set_satellites(ui_home_t *h, int count, const char *quality)
@@ -392,15 +407,23 @@ void ui_home_set_local_time(ui_home_t *h, const char *hms, const char *ampm,
     }
 }
 
-void ui_home_set_trip(ui_home_t *h, float distance_mi, const char *moving,
-                      float avg_mph, float max_mph, int gain_ft)
+void ui_home_set_trip(ui_home_t *h, float distance, const char *moving,
+                      float avg, float max, int gain,
+                      const char *dist_unit, const char *speed_unit,
+                      const char *elev_unit)
 {
     if (!h) return;
-    lv_label_set_text_fmt(h->trip_distance, "%.2f", distance_mi);
+    lv_label_set_text_fmt(h->trip_distance, "%.2f", distance);
+    if (dist_unit) lv_label_set_text(h->trip_distance_unit, dist_unit);
     if (moving) lv_label_set_text(h->trip_moving, moving);
-    lv_label_set_text_fmt(h->trip_avg, "%.1f", avg_mph);
-    lv_label_set_text_fmt(h->trip_max, "%.1f", max_mph);
-    lv_label_set_text_fmt(h->trip_gain, "%d", gain_ft);
+    lv_label_set_text_fmt(h->trip_avg, "%.1f", avg);
+    lv_label_set_text_fmt(h->trip_max, "%.1f", max);
+    if (speed_unit) {
+        lv_label_set_text(h->trip_avg_unit, speed_unit);
+        lv_label_set_text(h->trip_max_unit, speed_unit);
+    }
+    lv_label_set_text_fmt(h->trip_gain, "%d", gain);
+    if (elev_unit) lv_label_set_text(h->trip_gain_unit, elev_unit);
 }
 
 void ui_home_set_tracking(ui_home_t *h, bool on)

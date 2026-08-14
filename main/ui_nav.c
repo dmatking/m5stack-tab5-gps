@@ -7,10 +7,14 @@ static ui_nav_t s_nav;
 #define ARROW_SIZE 220
 #define ARROW_R    82.0f
 
-/* Small metric card used in the 2x2 grid. */
+/* Small metric card used in the 2x2 grid. unit is optional (ETA/TIME TO GO
+ * are already-formatted time strings, no unit to show) -- CLOSURE/SPEED pass
+ * one so the mph/km-h suffix that was previously missing entirely shows up
+ * next to the number, matching the rest of the app's convention. */
 static lv_obj_t *stat_card(lv_obj_t *parent, const char *caption,
                            const char *value, lv_color_t color,
-                           lv_obj_t **out_value)
+                           lv_obj_t **out_value, const char *unit,
+                           lv_obj_t **out_unit)
 {
     lv_obj_t *c = ui_card(parent);
     // No ui_mark_placeholder() -- all 4 uses (closure/ETA/time-to-go/speed)
@@ -22,7 +26,16 @@ static lv_obj_t *stat_card(lv_obj_t *parent, const char *caption,
     lv_obj_set_style_pad_ver(c, 14, 0);
     ui_flex_col(c, 2);
     ui_caption(c, caption);
-    *out_value = ui_label(c, value, ui_font.num_m, color);
+    lv_obj_t *row = ui_box(c);
+    lv_obj_set_size(row, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    ui_flex_row(row, 6);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END,
+                          LV_FLEX_ALIGN_END);
+    *out_value = ui_label(row, value, ui_font.num_m, color);
+    if (unit) {
+        lv_obj_t *u = ui_label(row, unit, ui_font.s, UI_C_MUTED);
+        if (out_unit) *out_unit = u;
+    }
     return c;
 }
 
@@ -162,20 +175,20 @@ ui_nav_t *ui_nav_create(lv_event_cb_t tab_cb)
     lv_obj_set_flex_align(dgrp, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END,
                           LV_FLEX_ALIGN_END);
     n->distance = ui_label(dgrp, "6.4", ui_font.num_xl, UI_C_TEXT);
-    ui_label(dgrp, "mi", ui_font.semi_m, UI_C_GREEN);
+    n->distance_unit = ui_label(dgrp, "mi", ui_font.semi_m, UI_C_GREEN);
 
     /* 2x2 stats ------------------------------------------------------------ */
     lv_obj_t *g1 = ui_box(body);
     lv_obj_set_size(g1, LV_PCT(100), LV_SIZE_CONTENT);
     ui_flex_row(g1, 12);
-    stat_card(g1, "CLOSURE (VMG)", "+21.4", UI_C_GREEN, &n->closure);
-    stat_card(g1, "ETA", "14:50", UI_C_TEXT, &n->eta);
+    stat_card(g1, "CLOSURE (VMG)", "+21.4", UI_C_GREEN, &n->closure, "mph", &n->closure_unit);
+    stat_card(g1, "ETA", "14:50", UI_C_TEXT, &n->eta, NULL, NULL);
 
     lv_obj_t *g2 = ui_box(body);
     lv_obj_set_size(g2, LV_PCT(100), LV_SIZE_CONTENT);
     ui_flex_row(g2, 12);
-    stat_card(g2, "TIME TO GO", "17:56", UI_C_TEXT, &n->time_to_go);
-    stat_card(g2, "SPEED", "24", UI_C_TEXT, &n->speed);
+    stat_card(g2, "TIME TO GO", "17:56", UI_C_TEXT, &n->time_to_go, NULL, NULL);
+    stat_card(g2, "SPEED", "24", UI_C_TEXT, &n->speed, "mph", &n->speed_unit);
 
     /* cross track ---------------------------------------------------------- */
     lv_obj_t *xtk = ui_card(body);
@@ -310,19 +323,21 @@ void ui_nav_set_bearing(ui_nav_t *n, int bearing_deg, int heading_deg)
     lv_obj_set_style_text_color(n->turn, turn <= 2 ? UI_C_GREEN : UI_C_BLUE, 0);
 }
 
-void ui_nav_set_distance(ui_nav_t *n, float miles)
+void ui_nav_set_distance(ui_nav_t *n, float distance, const char *unit)
 {
     if (!n) return;
-    if (miles < 10.0f) lv_label_set_text_fmt(n->distance, "%.2f", miles);
-    else               lv_label_set_text_fmt(n->distance, "%.1f", miles);
+    if (distance < 10.0f) lv_label_set_text_fmt(n->distance, "%.2f", distance);
+    else                  lv_label_set_text_fmt(n->distance, "%.1f", distance);
+    if (unit) lv_label_set_text(n->distance_unit, unit);
 }
 
-void ui_nav_set_closure(ui_nav_t *n, float vmg_mph)
+void ui_nav_set_closure(ui_nav_t *n, float vmg, const char *unit)
 {
     if (!n) return;
-    lv_label_set_text_fmt(n->closure, "%+.1f", vmg_mph);
+    lv_label_set_text_fmt(n->closure, "%+.1f", vmg);
     lv_obj_set_style_text_color(n->closure,
-                                vmg_mph > 0 ? UI_C_GREEN : UI_C_RED, 0);
+                                vmg > 0 ? UI_C_GREEN : UI_C_RED, 0);
+    if (unit) lv_label_set_text(n->closure_unit, unit);
 }
 
 void ui_nav_set_eta(ui_nav_t *n, const char *eta_text, const char *time_to_go)
@@ -332,9 +347,11 @@ void ui_nav_set_eta(ui_nav_t *n, const char *eta_text, const char *time_to_go)
     if (time_to_go) lv_label_set_text(n->time_to_go, time_to_go);
 }
 
-void ui_nav_set_speed(ui_nav_t *n, float mph)
+void ui_nav_set_speed(ui_nav_t *n, float speed, const char *unit)
 {
-    if (n) lv_label_set_text_fmt(n->speed, "%d", (int)(mph + 0.5f));
+    if (!n) return;
+    lv_label_set_text_fmt(n->speed, "%d", (int)(speed + 0.5f));
+    if (unit) lv_label_set_text(n->speed_unit, unit);
 }
 
 void ui_nav_set_cross_track(ui_nav_t *n, float offset_mi, bool closing)
