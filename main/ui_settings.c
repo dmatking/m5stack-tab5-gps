@@ -145,15 +145,20 @@ ui_settings_t *ui_settings_create(lv_event_cb_t tab_cb)
     s->sw_time_24h = row_switch(g2, "24-hour time", false);
 
     /* gnss ----------------------------------------------------------------- */
+    // No ui_mark_placeholder() -- both remaining rows are real (read-only)
+    // displays, gps_ui_bridge.c wires them from measured/parsed GPS data.
+    // Used to also have an "SBAS / WAAS" toggle -- removed rather than left
+    // decorative: it had zero real backing (no way to read real SBAS status
+    // from this module's NMEA output, and no write access to the module to
+    // change it -- see gps.c's file header on the unused TX line), unlike
+    // Constellations/Update rate which are at least real information even
+    // without write access.
     lv_obj_t *g3 = group(body, "GNSS");
-    ui_mark_placeholder(g3);
     row_value(g3, "Constellations", "GPS + GLO + GAL", UI_C_MUTED,
               UI_SET_CONSTELLATIONS, &s->value[UI_SET_CONSTELLATIONS]);
     ui_divider(g3);
     row_value(g3, "Update rate", "5 Hz", UI_C_MUTED, UI_SET_UPDATE_RATE,
               &s->value[UI_SET_UPDATE_RATE]);
-    ui_divider(g3);
-    s->sw_sbas = row_switch(g3, "SBAS / WAAS", true);
 
     /* logging -------------------------------------------------------------- */
     // No ui_mark_placeholder() -- both rows are real (gps_ui_bridge.c wires
@@ -204,13 +209,6 @@ void ui_settings_set_screen_on(ui_settings_t *s, bool on)
     if (!s) return;
     if (on) lv_obj_add_state(s->sw_screen_on, LV_STATE_CHECKED);
     else    lv_obj_remove_state(s->sw_screen_on, LV_STATE_CHECKED);
-}
-
-void ui_settings_set_sbas(ui_settings_t *s, bool on)
-{
-    if (!s) return;
-    if (on) lv_obj_add_state(s->sw_sbas, LV_STATE_CHECKED);
-    else    lv_obj_remove_state(s->sw_sbas, LV_STATE_CHECKED);
 }
 
 void ui_settings_set_time_24h(ui_settings_t *s, bool on)
