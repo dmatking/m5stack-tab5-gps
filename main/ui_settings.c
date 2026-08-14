@@ -92,13 +92,13 @@ ui_settings_t *ui_settings_create(lv_event_cb_t tab_cb)
     ui_flex_col(body, 10);
 
     /* display -------------------------------------------------------------- */
+    // No ui_mark_placeholder() -- both rows are real (gps_ui_bridge.c/
+    // design_ui.c wire brightness and keep-screen-on to the real backlight
+    // and idle timeout). Used to also have a "Night mode" row -- removed
+    // rather than left decorative: there's no night-mode visual treatment
+    // (dimming/tint) built anywhere in the app for it to control, so it had
+    // nothing real to become without designing that from scratch first.
     lv_obj_t *g1 = group(body, "DISPLAY");
-    // Every row in every group on this screen is decorative except the
-    // "24-hour time" switch in g2 below -- see project notes. Groups (not
-    // individual rows) are the actual ui_card()s here, so g2's one real
-    // row gets caught up in its group's tint too; noted rather than
-    // engineered around, this is a QA aid, not a precision instrument.
-    ui_mark_placeholder(g1);
 
     lv_obj_t *br = row_base(g1, "Brightness");
     lv_obj_t *brr = ui_box(br);
@@ -116,9 +116,6 @@ ui_settings_t *ui_settings_create(lv_event_cb_t tab_cb)
     lv_obj_set_style_pad_all(s->brightness, 6, LV_PART_KNOB);
     s->brightness_pct = ui_label(brr, "72%", ui_font.s, UI_C_MUTED);
 
-    ui_divider(g1);
-    row_value(g1, "Night mode", "Auto", UI_C_BLUE, UI_SET_NIGHT_MODE,
-              &s->value[UI_SET_NIGHT_MODE]);
     ui_divider(g1);
     s->sw_screen_on = row_switch(g1, "Keep screen on", true);
 

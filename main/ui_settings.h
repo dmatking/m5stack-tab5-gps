@@ -11,8 +11,7 @@ extern "C" {
 #endif
 
 typedef enum {
-    UI_SET_NIGHT_MODE = 0,
-    UI_SET_UNITS,
+    UI_SET_UNITS = 0,
     UI_SET_ELEVATION,
     UI_SET_COORD_FORMAT,
     UI_SET_TIMEZONE,
