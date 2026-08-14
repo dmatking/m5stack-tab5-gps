@@ -11,6 +11,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "app_settings.h"
 #include "design_ui.h"
@@ -251,6 +252,18 @@ static void tick(void)
     gps_state_t st = gps_get_state();
     bool fix = gps_has_fix();
 
+    // Which constellations currently have >=1 satellite in view, and how
+    // many satellites total are used in the fix -- computed once here
+    // (unlocked, cheap) rather than per-screen, since both Telemetry's
+    // SIGNAL legend and Settings' Constellations row want it.
+    bool const_seen[5] = { false, false, false, false, false };
+    int sats_used_total = 0;
+    for (int i = 0; i < st.satellite_count; i++) {
+        const gps_satellite_t *sat = &st.satellites[i];
+        if (sat->used_in_solution) sats_used_total++;
+        if (sat->constellation < 5) const_seen[sat->constellation] = true;
+    }
+
     if (!lvgl_port_lock(50)) return;
 
     ui_home_t *h = ui_home();
@@ -448,19 +461,13 @@ static void tick(void)
         bool    sig_has_snr[UI_TELEM_BARS];
         uint8_t sig_const[UI_TELEM_BARS];
         bool    sig_used[UI_TELEM_BARS];
-        bool    const_seen[5] = { false, false, false, false, false };
-        int used_count = 0;
         int n = st.satellite_count;
-        for (int i = 0; i < n; i++) {
+        for (int i = 0; i < n && i < UI_TELEM_BARS; i++) {
             const gps_satellite_t *sat = &st.satellites[i];
-            if (sat->used_in_solution) used_count++;
-            if (sat->constellation < 5) const_seen[sat->constellation] = true;
-            if (i < UI_TELEM_BARS) {
-                sig_snr[i]      = sat->snr;
-                sig_has_snr[i]  = sat->has_snr;
-                sig_const[i]    = (uint8_t)sat->constellation;
-                sig_used[i]     = sat->used_in_solution;
-            }
+            sig_snr[i]      = sat->snr;
+            sig_has_snr[i]  = sat->has_snr;
+            sig_const[i]    = (uint8_t)sat->constellation;
+            sig_used[i]     = sat->used_in_solution;
         }
         if (n > UI_TELEM_BARS) n = UI_TELEM_BARS;
 
@@ -480,20 +487,56 @@ static void tick(void)
         if (!any_const) snprintf(const_buf, sizeof(const_buf), "none in view");
 
         ui_telemetry_set_signal(t, sig_snr, sig_has_snr, sig_const, sig_used,
-                                n, used_count, const_buf);
+                                n, sats_used_total, const_buf);
     }
 
     // ---- Settings screen ---------------------------------------------------
-    // Only LOGGING & STORAGE is real here -- the rest of this screen (units,
-    // coordinate format, timezone, night mode, GNSS receiver config) either
-    // needs a global unit-preference threaded through every display site
-    // that doesn't exist yet, or actual write access to the GPS module to
-    // reconfigure it, which gps.c doesn't have (its TX line is wired but
-    // unused -- see its own file header). Left decorative rather than
-    // faked.
+    // DISPLAY (brightness/keep-screen-on) and LOGGING & STORAGE are fully
+    // real (set earlier/below). Constellations/Update rate/Time zone below
+    // are real *displays* of measured/computed values, not editable
+    // settings -- this app has no write path to the GPS module to actually
+    // reconfigure its constellations or update rate (TX line wired but
+    // unused, see gps.c's file header), and Time zone is Central-only by
+    // design (see us_central_from_utc()'s own comment), not a picker.
+    // Units, coordinate format, and Night mode stay decorative -- those
+    // would need a global unit-preference threaded through every display
+    // site (Home/Telemetry/Nav), a genuinely separate, larger piece of
+    // work, not attempted here.
     ui_settings_t *set_ui = ui_settings();
     if (set_ui) {
         ui_settings_set_track_log(set_ui, gps_log_active());
+
+        static const char *const_abbrev[5] = { "GPS", "GLO", "GAL", "BEI", "QZS" };
+        char const_short[48];
+        int const_short_len = 0;
+        bool any_const_short = false;
+        for (int c = 0; c < 5; c++) {
+            if (!const_seen[c]) continue;
+            const_short_len += snprintf(const_short + const_short_len,
+                                        sizeof(const_short) - (size_t)const_short_len,
+                                        "%s%s", any_const_short ? " + " : "", const_abbrev[c]);
+            any_const_short = true;
+        }
+        if (any_const_short) {
+            ui_settings_set_value(set_ui, UI_SET_CONSTELLATIONS, const_short);
+        }
+
+        if (st.fix_rate_valid) {
+            char rate_buf[16];
+            snprintf(rate_buf, sizeof(rate_buf), "%.0f Hz", st.fix_rate_hz);
+            ui_settings_set_value(set_ui, UI_SET_UPDATE_RATE, rate_buf);
+        }
+
+        if (have_local) {
+            // Central-only (see this block's own comment above) -- CDT/CST
+            // are the only two abbreviations us_central_from_utc() ever
+            // returns, so their UTC offsets can just be hardcoded here
+            // rather than computed generically.
+            char tz_buf[24];
+            snprintf(tz_buf, sizeof(tz_buf), "%s (UTC%s)", tz_abbrev,
+                     strcmp(tz_abbrev, "CDT") == 0 ? "-5" : "-6");
+            ui_settings_set_value(set_ui, UI_SET_TIMEZONE, tz_buf);
+        }
 
         // SD usage walks the FAT free-cluster chain (esp_vfs_fat_info()) --
         // real work, unlike everything else this task touches. Once every

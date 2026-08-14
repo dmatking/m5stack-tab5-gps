@@ -70,6 +70,8 @@ typedef struct {
     float hdop;             // horizontal dilution of precision (lower = better)
     float altitude_m;       // antenna altitude above mean sea level, meters
     int sats_in_use;
+    float fix_rate_hz;      // measured GGA-to-GGA interval, not a config value read from the module -- see handle_gga()
+    bool fix_rate_valid;    // false until a second GGA sentence arrives to measure an interval from
     struct tm utc_tm;       // UTC time/date (populated incrementally from GGA + RMC)
     gps_satellite_t satellites[GPS_MAX_SATS];
     int satellite_count;

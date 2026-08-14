@@ -45,6 +45,7 @@ static const char *TAG = "GPS";
 
 static gps_state_t s_state;
 static SemaphoreHandle_t s_mutex;
+static int64_t s_last_gga_us; // for fix_rate_hz -- see handle_gga()
 static FILE *s_log_f;  // raw NMEA log on the SD card, NULL if unavailable
 static volatile bool s_log_ok = false;  // most recent write (or the initial open) succeeded
 
@@ -237,7 +238,6 @@ static void handle_gsa(char *sentence)
 static gps_satellite_t s_gsv_scratch[GSV_SCRATCH_MAX];
 static int s_gsv_scratch_count;
 static gps_constellation_t s_gsv_scratch_const = GPS_CONST_UNKNOWN;
-static int s_gsv_expected_msgs;
 
 static void handle_gsv(char *sentence)
 {
@@ -361,6 +361,25 @@ static void handle_gga(char *sentence)
         tmp.altitude_m = strtof(alt, NULL);
         tmp.altitude_valid = true;
     }
+
+    // Settings screen's "Update rate" -- measured from real GGA-to-GGA
+    // timing, not read from the module's configuration (it has no command
+    // interface here, see this file's header). Bounds reject a stray huge
+    // gap (e.g. this task just started) or implausibly short one (line
+    // noise producing back-to-back sentences) rather than showing a wild
+    // number for one tick; light EMA smooths ordinary jitter, same
+    // 0.8/0.2 split gps_ui_bridge.c's vertical-speed smoothing uses.
+    int64_t now_us = esp_timer_get_time();
+    if (s_last_gga_us != 0) {
+        float interval_s = (float)(now_us - s_last_gga_us) / 1e6f;
+        if (interval_s > 0.05f && interval_s < 10.0f) {
+            float measured_hz = 1.0f / interval_s;
+            tmp.fix_rate_hz = tmp.fix_rate_valid
+                ? (0.8f * tmp.fix_rate_hz + 0.2f * measured_hz) : measured_hz;
+            tmp.fix_rate_valid = true;
+        }
+    }
+    s_last_gga_us = now_us;
 
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     s_state = tmp;
