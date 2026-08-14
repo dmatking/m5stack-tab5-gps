@@ -64,6 +64,30 @@ LV_FONT_DECLARE(ui_font_bold_86)   /* Bold 86px, digits subset */
 #define UI_C_MAP_ROAD  lv_color_hex(0x243040)
 #define UI_C_MAP_TRACK lv_color_hex(0x1C2735)
 
+/* Telemetry's per-satellite SIGNAL chart -- one bright/dim pair per
+ * constellation (gps_constellation_t, gps.h), same bright/dim relationship
+ * as UI_C_GREEN/UI_C_GREEN_DIM above. GPS reuses that existing pair rather
+ * than getting its own. */
+#define UI_C_GLONASS     UI_C_BLUE
+#define UI_C_GLONASS_DIM lv_color_hex(0x1B3C63)
+#define UI_C_GALILEO     lv_color_hex(0xF2C245)
+#define UI_C_GALILEO_DIM lv_color_hex(0x6B5620)
+#define UI_C_BEIDOU      lv_color_hex(0xF2874B)
+#define UI_C_BEIDOU_DIM  lv_color_hex(0x6B3D22)
+#define UI_C_QZSS        lv_color_hex(0xB05CF2)
+#define UI_C_QZSS_DIM    lv_color_hex(0x4E2A6B)
+
+/* Same 5 bright colors as plain "RRGGBB" strings (no lv_color_hex(), no
+ * leading '#') -- gps_ui_bridge.c builds the SIGNAL card's constellation
+ * legend out of these via LVGL's label recolor markup ("#RRGGBB text#"),
+ * which wants the hex digits as text, not an lv_color_t. Kept next to the
+ * lv_color_t versions above so the two can't quietly drift apart. */
+#define UI_C_GPS_HEX      "3ED12A"
+#define UI_C_GLONASS_HEX  "2F80ED"
+#define UI_C_GALILEO_HEX  "F2C245"
+#define UI_C_BEIDOU_HEX   "F2874B"
+#define UI_C_QZSS_HEX     "B05CF2"
+
 /* ---- geometry ----------------------------------------------------------- */
 #define UI_SCREEN_W    720
 #define UI_SCREEN_H    1280

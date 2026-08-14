@@ -106,9 +106,6 @@ ui_telemetry_t *ui_telemetry_create(lv_event_cb_t tab_cb)
 
     /* signal --------------------------------------------------------------- */
     lv_obj_t *sig = ui_card(body);
-    // gps.c doesn't parse GSV yet, so these bars/constellations are demo
-    // values -- see project notes. Everything else on this screen is real.
-    ui_mark_placeholder(sig);
     lv_obj_set_width(sig, LV_PCT(100));
     lv_obj_set_flex_grow(sig, 1);
     lv_obj_set_style_pad_hor(sig, 20, 0);
@@ -119,30 +116,47 @@ ui_telemetry_t *ui_telemetry_create(lv_event_cb_t tab_cb)
 
     lv_obj_t *shead = ui_box(sig);
     lv_obj_set_size(shead, LV_PCT(100), LV_SIZE_CONTENT);
-    ui_flex_row(shead, 8);
-    lv_obj_set_flex_align(shead, LV_FLEX_ALIGN_SPACE_BETWEEN,
-                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    // Stacked, not a side-by-side row -- with real data (not the original
+    // 3-constellation demo string) the constellation list can run to all 5
+    // names ("GPS | GLONASS | GALILEO | BEIDOU | QZSS"), which overlapped
+    // the caption in the same row instead of wrapping (confirmed on real
+    // hardware). A column has nothing to overlap regardless of how long
+    // either line gets.
+    ui_flex_col(shead, 4);
+    lv_obj_set_flex_align(shead, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_START);
     // "-" not "\xE2\x80\x94" (em dash) -- same missing-glyph issue as the ·
     // fix above, just a different character (also outside LVGL's built-in
     // font's ASCII+degree-sign-only coverage).
     t->signal_caption  = ui_caption(shead, "SIGNAL - 14 IN SOLUTION");
     t->constellations  = ui_label(shead, "GPS | GLONASS | GALILEO",
-                                  ui_font.xs, UI_C_GREEN);
+                                  ui_font.xs, UI_C_MUTED);
+    lv_obj_set_width(t->constellations, LV_PCT(100));
+    lv_label_set_long_mode(t->constellations, LV_LABEL_LONG_WRAP);
+    // Recolor mode: gps_ui_bridge.c sends this label's text with inline
+    // "#RRGGBB text#" spans, one color per constellation matching that
+    // constellation's bars below (see UI_C_*_HEX in ui_theme.h) -- lets a
+    // single label show 5 different colors instead of one uniform tint.
+    // The " | " separators between spans render in this label's own base
+    // color (UI_C_MUTED, set above) since they're outside any tag.
+    lv_label_set_recolor(t->constellations, true);
 
     lv_obj_t *bars = ui_box(sig);
     lv_obj_set_size(bars, LV_PCT(100), 96);
     ui_flex_row(bars, 8);
     lv_obj_set_flex_align(bars, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END,
                           LV_FLEX_ALIGN_END);
-    const int demo[UI_TELEM_BARS] = { 72, 94, 60, 84, 44, 68, 36, 56, 26, 78, 32, 64 };
+    // All UI_TELEM_BARS created up front, hidden until ui_telemetry_set_signal()
+    // has real satellites to show -- hidden flex items don't take up row
+    // space, so however many end up visible auto-fill the width via
+    // flex_grow, same as if only that many had ever been created. Color/
+    // height/visibility all come from real data now; no demo values.
     for (int i = 0; i < UI_TELEM_BARS; i++) {
         t->bars[i] = ui_box(bars);
         lv_obj_set_flex_grow(t->bars[i], 1);
-        lv_obj_set_height(t->bars[i], LV_PCT(demo[i]));
         lv_obj_set_style_radius(t->bars[i], 3, 0);
-        lv_obj_set_style_bg_color(t->bars[i],
-                                  demo[i] >= 40 ? UI_C_GREEN : UI_C_GREEN_DIM, 0);
         lv_obj_set_style_bg_opa(t->bars[i], LV_OPA_COVER, 0);
+        lv_obj_add_flag(t->bars[i], LV_OBJ_FLAG_HIDDEN);
     }
 
     ui_navbar_create(scr, UI_TAB_TELEMETRY, tab_cb);
@@ -205,18 +219,45 @@ void ui_telemetry_set_trip(ui_telemetry_t *t, float miles, float max_mph,
     if (moving) lv_label_set_text(t->moving, moving);
 }
 
-void ui_telemetry_set_signal(ui_telemetry_t *t, const uint8_t *snr, int n,
-                             int used, const char *constellations)
+void ui_telemetry_set_signal(ui_telemetry_t *t, const uint8_t *snr,
+                             const bool *has_snr, const uint8_t *constellation,
+                             const bool *used, int n, int used_count,
+                             const char *constellations)
 {
     if (!t) return;
+    // GPS_CONST_* order from gps.h, duplicated here rather than included --
+    // see this setter's own header comment in ui_telemetry.h for why. Local
+    // (not file-scope static): lv_color_hex() is a function, not a constant
+    // expression, so it can't sit in a static initializer -- this just
+    // builds the same 5 entries fresh each call instead, at 500ms-tick cost.
+    const struct { lv_color_t bright, dim; } const_colors[5] = {
+        { UI_C_GREEN,   UI_C_GREEN_DIM },    // 0 GPS
+        { UI_C_GLONASS, UI_C_GLONASS_DIM },  // 1 GLONASS
+        { UI_C_GALILEO, UI_C_GALILEO_DIM },  // 2 Galileo
+        { UI_C_BEIDOU,  UI_C_BEIDOU_DIM },   // 3 BeiDou
+        { UI_C_QZSS,    UI_C_QZSS_DIM },     // 4 QZSS
+    };
     if (n > UI_TELEM_BARS) n = UI_TELEM_BARS;
     for (int i = 0; i < UI_TELEM_BARS; i++) {
-        int v = (snr && i < n) ? snr[i] : 0;
-        if (v > 55) v = 55;
-        lv_obj_set_height(t->bars[i], LV_PCT(v * 100 / 55));
+        if (i >= n) {
+            lv_obj_add_flag(t->bars[i], LV_OBJ_FLAG_HIDDEN);
+            continue;
+        }
+        lv_obj_remove_flag(t->bars[i], LV_OBJ_FLAG_HIDDEN);
+
+        // A bar with no SNR yet (visible but not decoding) still shows at a
+        // small floor height rather than collapsing to nothing -- otherwise
+        // "in view but weak" and "not there at all" look identical.
+        int v = has_snr[i] ? snr[i] : 0;
+        if (v > 55) v = 55;  // 55 dB-Hz is already a very strong signal; taller than that wastes bar height
+        int pct = v * 100 / 55;
+        if (pct < 6) pct = 6;
+        lv_obj_set_height(t->bars[i], LV_PCT(pct));
+
+        uint8_t c = (constellation[i] < 5) ? constellation[i] : 0;
         lv_obj_set_style_bg_color(t->bars[i],
-                                  v >= 25 ? UI_C_GREEN : UI_C_GREEN_DIM, 0);
+                                  used[i] ? const_colors[c].bright : const_colors[c].dim, 0);
     }
-    lv_label_set_text_fmt(t->signal_caption, "SIGNAL - %d IN SOLUTION", used);
+    lv_label_set_text_fmt(t->signal_caption, "SIGNAL - %d IN SOLUTION", used_count);
     if (constellations) lv_label_set_text(t->constellations, constellations);
 }

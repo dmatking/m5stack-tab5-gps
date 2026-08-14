@@ -441,9 +441,59 @@ static void tick(void)
         ui_home_set_trip(h, s_trip_miles, moving_hms_buf, avg_mph, s_max_mph,
                          (int)(s_elev_gain_ft + 0.5f));
 
-        // Signal bars / constellation list stay at ui_telemetry_create()'s
-        // demo values -- would need GSV parsing (per-satellite SNR) that
-        // gps.c doesn't do yet, same limitation as the "visible" count above.
+        // Signal bars -- one per satellite gps.c's GSV/GSA parsing currently
+        // has in view, real SNR/constellation/used-in-solution per bar. See
+        // gps.h's gps_satellite_t; ui_telemetry_set_signal() takes plain
+        // arrays rather than that struct directly to keep this screen's
+        // header decoupled from gps.h's types (same reasoning as its other
+        // setters).
+        // "#RRGGBB text#" recolor spans (see ui_telemetry_create()'s
+        // lv_label_set_recolor()) so each name matches its own bars below --
+        // hex values must match ui_theme.h's UI_C_*_HEX (bright variants).
+        static const char *const_names[5] = {
+            "#" UI_C_GPS_HEX     " GPS#",
+            "#" UI_C_GLONASS_HEX " GLONASS#",
+            "#" UI_C_GALILEO_HEX " GALILEO#",
+            "#" UI_C_BEIDOU_HEX  " BEIDOU#",
+            "#" UI_C_QZSS_HEX    " QZSS#",
+        };
+        uint8_t sig_snr[UI_TELEM_BARS];
+        bool    sig_has_snr[UI_TELEM_BARS];
+        uint8_t sig_const[UI_TELEM_BARS];
+        bool    sig_used[UI_TELEM_BARS];
+        bool    const_seen[5] = { false, false, false, false, false };
+        int used_count = 0;
+        int n = st.satellite_count;
+        for (int i = 0; i < n; i++) {
+            const gps_satellite_t *sat = &st.satellites[i];
+            if (sat->used_in_solution) used_count++;
+            if (sat->constellation < 5) const_seen[sat->constellation] = true;
+            if (i < UI_TELEM_BARS) {
+                sig_snr[i]      = sat->snr;
+                sig_has_snr[i]  = sat->has_snr;
+                sig_const[i]    = (uint8_t)sat->constellation;
+                sig_used[i]     = sat->used_in_solution;
+            }
+        }
+        if (n > UI_TELEM_BARS) n = UI_TELEM_BARS;
+
+        // snprintf-with-running-offset rather than strlcat() -- this
+        // codebase already avoids libc's BSD string extensions elsewhere
+        // (see ui_goto.c's lv_strlcpy() use instead of plain strlcpy()).
+        // 128 bytes comfortably covers all 5 colored spans + " | " separators.
+        char const_buf[128];
+        int const_len = 0;
+        bool any_const = false;
+        for (int c = 0; c < 5; c++) {
+            if (!const_seen[c]) continue;
+            const_len += snprintf(const_buf + const_len, sizeof(const_buf) - (size_t)const_len,
+                                  "%s%s", any_const ? " | " : "", const_names[c]);
+            any_const = true;
+        }
+        if (!any_const) snprintf(const_buf, sizeof(const_buf), "none in view");
+
+        ui_telemetry_set_signal(t, sig_snr, sig_has_snr, sig_const, sig_used,
+                                n, used_count, const_buf);
     }
 
     lvgl_port_unlock();
