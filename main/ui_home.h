@@ -41,6 +41,13 @@ typedef struct {
     lv_obj_t *track_btn;
     lv_obj_t *track_btn_label;
     bool tracking;
+
+    // Set by gps_ui_bridge.c via ui_home_set_reset_trip_cb() so the Reset
+    // Trip button (behind its own yes/no confirm) can zero the *real*
+    // accumulator living in gps_ui_bridge.c, not just this screen's
+    // displayed text -- otherwise the very next tick would overwrite the
+    // reset with the old accumulated values again.
+    void (*reset_trip_cb)(void);
 } ui_home_t;
 
 /* Builds the screen but does not load it. `tab_cb` is forwarded to the tab bar. */
@@ -67,6 +74,12 @@ void ui_home_set_local_time(ui_home_t *h, const char *hms, const char *ampm,
 void ui_home_set_trip(ui_home_t *h, float distance_mi, const char *moving,
                       float avg_mph, float max_mph, int gain_ft);
 void ui_home_set_tracking(ui_home_t *h, bool on);
+
+// Registers the callback the Reset Trip button fires once the user confirms
+// the yes/no prompt -- see ui_home_t's reset_trip_cb field. Optional: if
+// never set, the button still resets this screen's own displayed values
+// but nothing upstream keeps re-feeding it real ones.
+void ui_home_set_reset_trip_cb(ui_home_t *h, void (*cb)(void));
 
 #ifdef __cplusplus
 }

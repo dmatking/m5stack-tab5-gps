@@ -220,11 +220,13 @@ static float haversine_miles(double lat1, double lon1, double lat2, double lon2)
     return (float)(r_mi * c);
 }
 
-// Telemetry's trip/max-speed/moving-time accumulator. Session-only -- there's
-// no reset button anywhere in the UI yet, so these climb from zero at boot
-// and keep going for as long as the app runs. Distance/moving-time only
-// accrue above MOVING_MPH_THRESHOLD, to keep GPS position jitter while
-// parked from slowly inflating the trip odometer.
+// Telemetry's (and now Home's, see ui_home_set_trip() below) trip/max-speed/
+// moving-time/elevation-gain accumulator. Session-only until
+// gps_ui_bridge_reset_trip() is called (wired to Home's Reset Trip button,
+// see ui_home_set_reset_trip_cb()) -- otherwise these just climb from zero
+// at boot for as long as the app runs. Distance/moving-time/elevation-gain
+// only accrue above MOVING_MPH_THRESHOLD, to keep GPS position/altitude
+// jitter while parked from slowly inflating the trip odometer.
 #define MOVING_MPH_THRESHOLD 1.15f  // ~1 knot
 
 static bool   s_have_prev_pos;
@@ -232,6 +234,7 @@ static double s_prev_lat, s_prev_lon;
 static float  s_trip_miles;
 static float  s_max_mph;
 static uint32_t s_moving_ticks;
+static float  s_elev_gain_ft;
 
 // Vertical speed (fpm) from consecutive altitude readings, 500ms apart --
 // noisy on its own (GPS altitude jitter amplified ~120x by the short
@@ -318,11 +321,10 @@ static void tick(void)
         ui_home_set_local_time(h, hms_buf, ampm_buf, date_buf, tz_abbrev);
     }
 
-    // Deliberately not touched: Home's own trip widget (needs avg-speed and
-    // elevation-gain too, which the accumulator below doesn't compute -- see
-    // gps_ui_bridge.h) and battery percent (no fuel-gauge hardware wired up
-    // yet). Both stay at their ui_home_create() demo values rather than
-    // being fed something fake.
+    // Home's trip widget is set further below, alongside Telemetry's -- both
+    // read the same accumulator, computed there. Battery percent deliberately
+    // NOT touched: no fuel-gauge hardware wired up yet, stays at
+    // ui_home_create()'s demo value rather than being fed something fake.
 
     // ---- Telemetry screen -------------------------------------------------
     // Same live gps_get_state() snapshot as Home, above -- reuses the speed/
@@ -378,6 +380,19 @@ static void tick(void)
                 float raw_fpm = (alt_ft - s_prev_alt_ft) * (60000.0f / TICK_PERIOD_MS);
                 s_vspeed_fpm_ema = 0.8f * s_vspeed_fpm_ema + 0.2f * raw_fpm;
                 vspeed_fpm = s_vspeed_fpm_ema;
+
+                // Elevation gain: same moving-gated raw-delta approach as
+                // the trip odometer above, for the same reason (parked GPS
+                // altitude jitter shouldn't slowly inflate "gain" out of
+                // nothing). Uses the raw per-tick delta, not the smoothed
+                // EMA -- matches the odometer's own precedent of not
+                // smoothing, though unlike distance this really is just
+                // summing noisy jitter while moving, so treat it as a
+                // rough total, not a precise one.
+                if (moving_now) {
+                    float delta_ft = alt_ft - s_prev_alt_ft;
+                    if (delta_ft > 0.0f) s_elev_gain_ft += delta_ft;
+                }
             }
             s_prev_alt_ft = alt_ft;
             s_have_prev_alt = true;
@@ -410,12 +425,44 @@ static void tick(void)
                  (unsigned)(moving_s / 3600), (unsigned)((moving_s % 3600) / 60));
         ui_telemetry_set_trip(t, s_trip_miles, s_max_mph, moving_buf);
 
+        // Home's trip card, same accumulator -- see its own "h:m:s" unit
+        // label (main/ui_home.c's trip_cell() call) for why this gets
+        // seconds and Telemetry's moving_buf above doesn't; each screen
+        // formats its own string from the same underlying moving_s.
+        char moving_hms_buf[16];
+        snprintf(moving_hms_buf, sizeof(moving_hms_buf), "%u:%02u:%02u",
+                 (unsigned)(moving_s / 3600), (unsigned)((moving_s % 3600) / 60),
+                 (unsigned)(moving_s % 60));
+        float avg_mph = 0.0f;
+        if (s_moving_ticks > 0) {
+            float moving_hours = s_moving_ticks * (TICK_PERIOD_MS / 1000.0f) / 3600.0f;
+            avg_mph = s_trip_miles / moving_hours;
+        }
+        ui_home_set_trip(h, s_trip_miles, moving_hms_buf, avg_mph, s_max_mph,
+                         (int)(s_elev_gain_ft + 0.5f));
+
         // Signal bars / constellation list stay at ui_telemetry_create()'s
         // demo values -- would need GSV parsing (per-satellite SNR) that
         // gps.c doesn't do yet, same limitation as the "visible" count above.
     }
 
     lvgl_port_unlock();
+}
+
+// Zeroes the trip accumulator above -- wired to Home's Reset Trip button
+// via ui_home_set_reset_trip_cb() below; the yes/no confirmation itself is
+// entirely the UI's concern (main/ui_home.c), this just does the reset.
+// Clears the have_prev_* flags too, not just the running totals -- otherwise
+// the very next tick would compute one huge bogus distance/elevation delta
+// against the stale pre-reset position/altitude instead of starting clean.
+void gps_ui_bridge_reset_trip(void)
+{
+    s_trip_miles = 0.0f;
+    s_max_mph = 0.0f;
+    s_moving_ticks = 0;
+    s_elev_gain_ft = 0.0f;
+    s_have_prev_pos = false;
+    s_have_prev_alt = false;
 }
 
 static void bridge_task(void *arg)
@@ -430,5 +477,8 @@ static void bridge_task(void *arg)
 
 void gps_ui_bridge_start(void)
 {
+    ui_home_t *h = ui_home();
+    if (h) ui_home_set_reset_trip_cb(h, gps_ui_bridge_reset_trip);
+
     xTaskCreate(bridge_task, "gps_ui_bridge", 4096, NULL, 3, NULL);
 }

@@ -37,7 +37,14 @@ static void trip_cell(lv_obj_t *parent, const char *caption, const char *value,
         lv_obj_set_style_border_width(cell, 1, 0);
         lv_obj_set_style_border_side(cell, LV_BORDER_SIDE_LEFT, 0);
     }
-    ui_caption(cell, caption);
+    lv_obj_t *cap = ui_caption(cell, caption);
+    // The cell's own flex align only centers the caption *label* as a
+    // block; a two-line caption (e.g. "SPEED\nAVG") auto-sizes to its
+    // widest line and left-aligns the shorter one under it by default,
+    // which reads as off-center. Needed even for single-line captions'
+    // sake of not special-casing this per call -- harmless there since a
+    // single line has nothing to center against.
+    lv_obj_set_style_text_align(cap, LV_TEXT_ALIGN_CENTER, 0);
     *out_value = ui_label(cell, value, ui_font.semi_m, UI_C_TEXT);
     ui_label(cell, unit, ui_font.xs, UI_C_MUTED);
 }
@@ -46,6 +53,90 @@ static void track_btn_cb(lv_event_t *e)
 {
     ui_home_t *h = (ui_home_t *)lv_event_get_user_data(e);
     ui_home_set_tracking(h, !h->tracking);
+}
+
+/* Reset Trip confirm dialog -- a scrim + small card, built fresh on demand
+ * and torn down on either button rather than pre-built/hidden. Only one can
+ * ever be open at a time (the Reset Trip button is the only thing that
+ * opens it), so a single file-static handle is enough to track it. */
+static lv_obj_t *s_reset_confirm;
+
+static void reset_confirm_close(void)
+{
+    if (s_reset_confirm) {
+        lv_obj_delete(s_reset_confirm);
+        s_reset_confirm = NULL;
+    }
+}
+
+static void reset_confirm_no_cb(lv_event_t *e)
+{
+    (void)e;
+    reset_confirm_close();
+}
+
+static void reset_confirm_yes_cb(lv_event_t *e)
+{
+    ui_home_t *h = (ui_home_t *)lv_event_get_user_data(e);
+    if (h->reset_trip_cb) h->reset_trip_cb(); // zeroes gps_ui_bridge.c's real accumulator
+    // Instant feedback -- the next tick would repaint these anyway once the
+    // accumulator above is actually zeroed, but no reason to make the user
+    // wait up to a tick period to see it took effect.
+    ui_home_set_trip(h, 0.0f, "0:00:00", 0.0f, 0.0f, 0);
+    reset_confirm_close();
+}
+
+static void reset_trip_btn_cb(lv_event_t *e)
+{
+    ui_home_t *h = (ui_home_t *)lv_event_get_user_data(e);
+    if (s_reset_confirm) return; // already open
+
+    // Full-screen dim scrim, added as the screen's last (topmost) child --
+    // clickable so it absorbs taps on anything behind it, same effect as a
+    // modal without needing a separate top layer. h->screen lays out its
+    // children (body + navbar) in a flex column, so without FLOATING this
+    // would just become a 3rd flex item positioned *after* the navbar
+    // instead of covering it -- confirmed on real hardware: the navbar
+    // stayed fully visible/tappable (including switching tabs right out
+    // from under an open confirm dialog) until this was added.
+    lv_obj_t *scrim = ui_box(h->screen);
+    lv_obj_add_flag(scrim, LV_OBJ_FLAG_FLOATING); // skip the screen's flex layout
+    lv_obj_set_pos(scrim, 0, 0);
+    lv_obj_set_size(scrim, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(scrim, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(scrim, LV_OPA_60, 0);
+    lv_obj_add_flag(scrim, LV_OBJ_FLAG_CLICKABLE);
+    s_reset_confirm = scrim;
+
+    lv_obj_t *card = ui_card(scrim);
+    lv_obj_set_width(card, LV_PCT(80));
+    lv_obj_set_height(card, LV_SIZE_CONTENT);
+    lv_obj_center(card);
+    lv_obj_set_style_pad_all(card, 20, 0);
+    ui_flex_col(card, 16);
+    lv_obj_set_flex_align(card, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+
+    ui_label(card, "Reset trip data?", ui_font.semi_m, UI_C_TEXT);
+    lv_obj_t *desc = ui_label(card, "Distance, moving time, and speed/elevation totals go back to zero.",
+                              ui_font.s, UI_C_MUTED);
+    lv_obj_set_width(desc, LV_PCT(100));
+    lv_label_set_long_mode(desc, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_align(desc, LV_TEXT_ALIGN_CENTER, 0);
+
+    lv_obj_t *btns = ui_box(card);
+    lv_obj_set_size(btns, LV_PCT(100), LV_SIZE_CONTENT);
+    ui_flex_row(btns, 12);
+    lv_obj_t *bl = ui_box(btns);
+    lv_obj_set_size(bl, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_grow(bl, 1);
+    lv_obj_t *no_btn = ui_button(bl, "Cancel", UI_C_CARD, UI_C_MUTED, true, UI_C_BORDER, 64);
+    lv_obj_add_event_cb(no_btn, reset_confirm_no_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *br = ui_box(btns);
+    lv_obj_set_size(br, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_grow(br, 1);
+    lv_obj_t *yes_btn = ui_button(br, "Reset", UI_C_CARD, UI_C_RED, true, lv_color_hex(0x63303A), 64);
+    lv_obj_add_event_cb(yes_btn, reset_confirm_yes_cb, LV_EVENT_CLICKED, h);
 }
 
 ui_home_t *ui_home_create(lv_event_cb_t tab_cb)
@@ -178,12 +269,14 @@ ui_home_t *ui_home_create(lv_event_cb_t tab_cb)
     h->utc_date = ui_label(utc, "May 26, 2025", ui_font.s, UI_C_MUTED);
 
     /* trip strip ---------------------------------------------------------- */
+    // No ui_mark_placeholder() -- real data now, fed by gps_ui_bridge.c's
+    // trip accumulator (see its own comment for the moving-gated distance/
+    // elevation-gain logic).
     lv_obj_t *trip = ui_card(body);
-    ui_mark_placeholder(trip); // gps_ui_bridge.c never calls ui_home_set_trip() -- see project notes
     lv_obj_set_width(trip, LV_PCT(100));
     lv_obj_set_height(trip, LV_SIZE_CONTENT);
-    lv_obj_set_style_pad_all(trip, 14, 0);
-    ui_flex_col(trip, 10);
+    lv_obj_set_style_pad_all(trip, 18, 0);
+    ui_flex_col(trip, 14);
     lv_obj_set_flex_align(trip, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
     ui_caption(trip, "TRIP (Since Reset)");
@@ -191,11 +284,22 @@ ui_home_t *ui_home_create(lv_event_cb_t tab_cb)
     lv_obj_t *cells = ui_box(trip);
     lv_obj_set_size(cells, LV_PCT(100), LV_SIZE_CONTENT);
     ui_flex_row(cells, 0);
-    trip_cell(cells, "DISTANCE", "12.48",   "mi",    false, &h->trip_distance);
-    trip_cell(cells, "MOVING",   "0:28:47", "h:m:s", true,  &h->trip_moving);
-    trip_cell(cells, "AVG SPEED","25.9",    "mph",   true,  &h->trip_avg);
-    trip_cell(cells, "MAX SPEED","68.3",    "mph",   true,  &h->trip_max);
-    trip_cell(cells, "ELEV GAIN","512",     "ft",    true,  &h->trip_gain);
+    trip_cell(cells, "DISTANCE",    "12.48",   "mi",    false, &h->trip_distance);
+    trip_cell(cells, "MOVING",      "0:28:47", "h:m:s", true,  &h->trip_moving);
+    // Two lines each (was one, cramped) -- same words, just wrapped, not
+    // abbreviated. SPEED first (not AVG/MAX first) so the shared word lines
+    // up between these two adjacent cells, with the distinguishing word
+    // underneath.
+    trip_cell(cells, "SPEED\nAVG",  "25.9",    "mph",   true,  &h->trip_avg);
+    trip_cell(cells, "SPEED\nMAX",  "68.3",    "mph",   true,  &h->trip_max);
+    trip_cell(cells, "ELEV\nGAIN",  "512",     "ft",    true,  &h->trip_gain);
+
+    /* Below the card, not inside it -- same footprint as Start Tracking
+     * below, just a secondary/destructive action (outline + red, matching
+     * ui_nav.c's "Stop Nav" button) rather than the primary blue fill. */
+    lv_obj_t *reset_btn = ui_button(body, "Reset Trip", UI_C_CARD, UI_C_RED,
+                                    true, lv_color_hex(0x63303A), 64);
+    lv_obj_add_event_cb(reset_btn, reset_trip_btn_cb, LV_EVENT_CLICKED, h);
 
     /* spacer + primary action -------------------------------------------- */
     lv_obj_t *spacer = ui_box(body);
@@ -292,4 +396,9 @@ void ui_home_set_tracking(ui_home_t *h, bool on)
     h->tracking = on;
     lv_label_set_text(h->track_btn_label, on ? "Stop Tracking" : "Start Tracking");
     lv_obj_set_style_bg_color(h->track_btn, on ? UI_C_GREEN_DIM : UI_C_BLUE_BTN, 0);
+}
+
+void ui_home_set_reset_trip_cb(ui_home_t *h, void (*cb)(void))
+{
+    if (h) h->reset_trip_cb = cb;
 }
