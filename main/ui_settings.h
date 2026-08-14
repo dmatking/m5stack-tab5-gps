@@ -44,6 +44,11 @@ void ui_settings_set_screen_on(ui_settings_t *s, bool on);
 void ui_settings_set_sbas(ui_settings_t *s, bool on);
 void ui_settings_set_time_24h(ui_settings_t *s, bool on);
 void ui_settings_set_storage(ui_settings_t *s, float used_gb, float total_gb);
+// "Recording"/UI_C_GREEN when true, "Not recording"/UI_C_MUTED when false --
+// real gps_log_active() state (main/gps.h), not the fabricated "| 5 s"
+// interval the original design's demo text had (gps.c logs each NMEA
+// sentence as it arrives, not on a fixed timer).
+void ui_settings_set_track_log(ui_settings_t *s, bool recording);
 void ui_settings_set_footer(ui_settings_t *s, const char *line1, const char *line2);
 
 /* Row taps report their ui_setting_id_t as event user data. */
@@ -52,6 +57,8 @@ void ui_settings_set_row_cb(ui_settings_t *s, lv_event_cb_t cb);
 void ui_settings_set_brightness_cb(ui_settings_t *s, lv_event_cb_t cb);
 /* 24-hour-time switch LV_EVENT_VALUE_CHANGED. */
 void ui_settings_set_time_24h_cb(ui_settings_t *s, lv_event_cb_t cb);
+/* "Keep screen on" switch LV_EVENT_VALUE_CHANGED. */
+void ui_settings_set_screen_on_cb(ui_settings_t *s, lv_event_cb_t cb);
 
 #ifdef __cplusplus
 }

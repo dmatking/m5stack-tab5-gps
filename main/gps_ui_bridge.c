@@ -15,9 +15,11 @@
 #include "app_settings.h"
 #include "design_ui.h"
 #include "gps.h"
+#include "sd_card.h"
 
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
+#include "esp_timer.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -479,6 +481,45 @@ static void tick(void)
 
         ui_telemetry_set_signal(t, sig_snr, sig_has_snr, sig_const, sig_used,
                                 n, used_count, const_buf);
+    }
+
+    // ---- Settings screen ---------------------------------------------------
+    // Only LOGGING & STORAGE is real here -- the rest of this screen (units,
+    // coordinate format, timezone, night mode, GNSS receiver config) either
+    // needs a global unit-preference threaded through every display site
+    // that doesn't exist yet, or actual write access to the GPS module to
+    // reconfigure it, which gps.c doesn't have (its TX line is wired but
+    // unused -- see its own file header). Left decorative rather than
+    // faked.
+    ui_settings_t *set_ui = ui_settings();
+    if (set_ui) {
+        ui_settings_set_track_log(set_ui, gps_log_active());
+
+        // SD usage walks the FAT free-cluster chain (esp_vfs_fat_info()) --
+        // real work, unlike everything else this task touches. Once every
+        // ~10s (TICK_PERIOD_MS * 20) is plenty for a number nobody's
+        // watching change in real time.
+        static int s_storage_tick;
+        if (++s_storage_tick >= 20) {
+            s_storage_tick = 0;
+            float used_gb, total_gb;
+            if (sd_card_get_usage(&used_gb, &total_gb)) {
+                ui_settings_set_storage(set_ui, used_gb, total_gb);
+            }
+        }
+
+        // Line 1 (FW version/serial number) has nothing real to show yet --
+        // kept as the same static placeholder ui_settings_create() shows at
+        // boot, just re-passed every tick since ui_settings_set_footer()
+        // always sets both lines together. Only line 2's uptime is real.
+        // "AT6668", not the original demo text's "u-blox M10" -- see
+        // gps.c's own file header for the real chipset (M5Stack GPS Module
+        // v2.1). The demo text named the wrong vendor entirely.
+        int64_t uptime_s = esp_timer_get_time() / 1000000;
+        char line2[48];
+        snprintf(line2, sizeof(line2), "AT6668 | uptime %d:%02d:%02d",
+                 (int)(uptime_s / 3600), (int)((uptime_s % 3600) / 60), (int)(uptime_s % 60));
+        ui_settings_set_footer(set_ui, "Tab5 | FW 1.4.2 | SN 0A31-7742", line2);
     }
 
     lvgl_port_unlock();

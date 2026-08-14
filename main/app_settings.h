@@ -35,6 +35,17 @@ bool app_settings_get_time_24h(void);
 // clean shutdown), so there's no "save on exit" moment to rely on instead.
 void app_settings_set_time_24h(bool on);
 
+// Backlight brightness, 5-100 (matches ui_settings.c's slider range).
+// Default 72, matching the original design's own demo value.
+int app_settings_get_brightness(void);
+void app_settings_set_brightness(int percent);
+
+// Whether the idle screen-off timeout (ui_shell.c/map_view.c, both share
+// this) is allowed to fire at all. Default true (screen stays on) --
+// matches ui_settings_create()'s own creation-time switch state.
+bool app_settings_get_keep_screen_on(void);
+void app_settings_set_keep_screen_on(bool on);
+
 #ifdef __cplusplus
 }
 #endif

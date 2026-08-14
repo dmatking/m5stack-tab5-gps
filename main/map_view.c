@@ -16,6 +16,7 @@
 // which are hardware DMA operations, sit on the critical path.
 
 #include "map_view.h"
+#include "app_settings.h"
 #include "board_interface.h"
 #include "gps.h"
 #include "map_config.h"
@@ -234,7 +235,8 @@ static void map_task(void *arg)
         }
 
         if (pressed) last_activity_us = now;
-        if (MAP_SCREEN_TIMEOUT_US > 0 && now - last_activity_us > MAP_SCREEN_TIMEOUT_US) {
+        if (MAP_SCREEN_TIMEOUT_US > 0 && !app_settings_get_keep_screen_on() &&
+            now - last_activity_us > MAP_SCREEN_TIMEOUT_US) {
             board_lcd_set_backlight(false);
             screen_on = false;
             was_pressed = pressed;

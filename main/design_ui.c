@@ -17,6 +17,7 @@
 #include "ui_shell.h"
 
 #include "app_settings.h"
+#include "board_interface.h"
 
 static ui_home_t      *s_home_p;
 static ui_map_t       *s_map_p;
@@ -43,14 +44,36 @@ static void goto_start_cb(lv_event_t *e)  { LV_UNUSED(e); ui_set_navigating(true
                                             ui_show_nav(); }
 static void goto_cancel_cb(lv_event_t *e) { LV_UNUSED(e); ui_show_tab(UI_TAB_HOME); }
 
-// Settings screen's "24-hour time" switch -- the one real (persisted, see
-// app_settings.h) row in the Units & Format group so far. gps_ui_bridge.c
-// re-formats every displayed clock on its own next 2Hz tick, so there's
-// no need to push a "settings changed" notification anywhere from here.
+// Settings screen's "24-hour time" switch -- real (persisted, see
+// app_settings.h). gps_ui_bridge.c re-formats every displayed clock on its
+// own next tick, so there's no need to push a "settings changed"
+// notification anywhere from here.
 static void time_24h_switch_cb(lv_event_t *e)
 {
     bool on = lv_obj_has_state((lv_obj_t *)lv_event_get_target(e), LV_STATE_CHECKED);
     app_settings_set_time_24h(on);
+}
+
+// Brightness slider -- applies immediately (not just on release) so
+// dragging it previews the actual result, same as most brightness sliders.
+static void brightness_slider_cb(lv_event_t *e)
+{
+    int percent = lv_slider_get_value((lv_obj_t *)lv_event_get_target(e));
+    app_settings_set_brightness(percent);
+    board_lcd_set_brightness(percent);
+    // The % label next to the slider is cosmetic (the slider's own
+    // position already shows the value); keep it in sync too rather than
+    // leaving it at whatever ui_settings_create()'s demo value was.
+    ui_settings_set_brightness(s_set_p, percent);
+}
+
+// "Keep screen on" switch -- ui_shell.c's and map_view.c's idle timeouts
+// both read app_settings_get_keep_screen_on() directly on their own next
+// tick, so (like the 24-hour switch above) nothing else needs telling here.
+static void screen_on_switch_cb(lv_event_t *e)
+{
+    bool on = lv_obj_has_state((lv_obj_t *)lv_event_get_target(e), LV_STATE_CHECKED);
+    app_settings_set_keep_screen_on(on);
 }
 
 void ui_init(void)
@@ -68,11 +91,19 @@ void ui_init(void)
     ui_goto_set_start_cb(s_goto_p, goto_start_cb, NULL);
     ui_goto_set_cancel_cb(s_goto_p, goto_cancel_cb, NULL);
 
-    // Sync the switch to the real persisted value -- ui_settings_create()
-    // itself always creates it unchecked (12-hour), same "creation-time
-    // placeholder, corrected right after" pattern as sw_screen_on/sw_sbas.
+    // Sync each switch/slider to its real persisted value -- ui_settings_create()
+    // itself always creates them at their own demo values, same "creation-time
+    // placeholder, corrected right after" pattern throughout this function.
     ui_settings_set_time_24h(s_set_p, app_settings_get_time_24h());
     ui_settings_set_time_24h_cb(s_set_p, time_24h_switch_cb);
+
+    int brightness = app_settings_get_brightness();
+    ui_settings_set_brightness(s_set_p, brightness);
+    board_lcd_set_brightness(brightness);
+    ui_settings_set_brightness_cb(s_set_p, brightness_slider_cb);
+
+    ui_settings_set_screen_on(s_set_p, app_settings_get_keep_screen_on());
+    ui_settings_set_screen_on_cb(s_set_p, screen_on_switch_cb);
 
     ui_set_navigating(false);
     // Deliberately not loading a screen here -- ui_shell.c controls the

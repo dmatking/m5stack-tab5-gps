@@ -21,3 +21,9 @@ bool sd_card_mount(void);
 
 // True if sd_card_mount() succeeded.
 bool sd_card_is_mounted(void);
+
+// Real used/total space on the mounted card, in GB (1e9 bytes, matching how
+// card/drive capacities are normally advertised -- not GiB). false (leaves
+// both untouched) if the card isn't mounted or the FATFS free-space query
+// fails.
+bool sd_card_get_usage(float *used_gb, float *total_gb);

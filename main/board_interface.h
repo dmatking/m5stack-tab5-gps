@@ -27,6 +27,12 @@ void board_lcd_fill(uint16_t color);
 // has no backlight control (default in board_defaults.c).
 void board_lcd_set_backlight(bool on);
 
+// Backlight brightness, 5-100 -- independent of board_lcd_set_backlight()'s
+// on/off (a screen-off timeout still cuts the light fully via that call;
+// this only changes how bright "on" is). No-op if the board has no PWM
+// backlight control (default in board_defaults.c).
+void board_lcd_set_brightness(int percent);
+
 // ---------------------------------------------------------------------------
 // Display drawing API — framebuffer-based pixel access for graphics demos.
 // Boards with an LCD should implement these. Weak no-op defaults are provided

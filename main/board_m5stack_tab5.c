@@ -392,6 +392,19 @@ void board_lcd_set_backlight(bool on)
     ledc_update_duty(LEDC_LOW_SPEED_MODE, LCD_LEDC_CHAN);
 }
 
+void board_lcd_set_brightness(int percent)
+{
+    if (percent < 0)   percent = 0;
+    if (percent > 100) percent = 100;
+    // Same LEDC channel board_lcd_set_backlight() drives -- a screen-off
+    // timeout still calls that for a full on/off, this just changes what
+    // duty cycle "on" means. 12-bit resolution (LCD_LEDC_DUTY_MAX = 4095)
+    // gives plenty of headroom for a 0-100 percent mapping.
+    uint32_t duty = (uint32_t)percent * LCD_LEDC_DUTY_MAX / 100;
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, LCD_LEDC_CHAN, duty);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, LCD_LEDC_CHAN);
+}
+
 // See the comment on board_lcd_register_color_trans_done_cb() (board_interface.h)
 // for why on_refresh_done and on_color_trans_done have to be (re-)registered
 // together, in one call, rather than each owner registering its own
