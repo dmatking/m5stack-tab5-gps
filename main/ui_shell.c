@@ -48,6 +48,7 @@
 
 #include "ui_shell.h"
 
+#include "app_settings.h"
 #include "board_interface.h"
 #include "design_ui.h"
 #include "navbar_snapshot.h"
@@ -113,6 +114,7 @@ static void idle_timer_cb(lv_timer_t *timer)
     (void)timer;
     if (!s_lvgl_screen_on) return; // already off, waiting on touch_read_cb() to wake it
     if (MAP_SCREEN_TIMEOUT_US <= 0) return;
+    if (app_settings_get_keep_screen_on()) return; // Settings' "Keep screen on" -- see map_view.c for its own copy of this check
     if (esp_timer_get_time() - s_last_activity_us > MAP_SCREEN_TIMEOUT_US) {
         board_lcd_set_backlight(false);
         s_lvgl_screen_on = false;

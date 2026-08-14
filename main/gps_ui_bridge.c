@@ -11,13 +11,16 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "app_settings.h"
 #include "design_ui.h"
 #include "gps.h"
+#include "sd_card.h"
 
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
+#include "esp_timer.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -26,19 +29,32 @@ static const char *TAG = "GPS_UI_BRIDGE";
 
 #define TICK_PERIOD_MS 500
 
-// "32° 54.1234' N" / "097° 19.5678' W" -- latitude degrees are 2 digits
-// (max 90), longitude 3 (max 180), matching the mockup's own formatting.
-static void format_ddm(double decimal_deg, bool is_lat, char *out, size_t out_size)
+// Formats one coordinate value per fmt (matches app_settings_get_coord_format()'s
+// numbering, == ui_goto.h's ui_coord_fmt_t): 0=DD MM.MMMM (the original,
+// only format this app had until Settings' Coordinate format row went from
+// decorative to real), 1=DD.DDDDDD, 2=DD MM SS. Latitude degrees are 2
+// digits (max 90), longitude 3 (max 180), matching the mockup's own
+// original DDM formatting -- kept for the other two formats too, for the
+// same reason: "097" not "97" reads as unambiguously 3-digit-wide at a
+// glance, "32" doesn't need to.
+static void format_coord(double decimal_deg, bool is_lat, int fmt, char *out, size_t out_size)
 {
     double a = fabs(decimal_deg);
     int deg = (int)a;
-    double min = (a - deg) * 60.0;
     char hemi = is_lat ? (decimal_deg >= 0 ? 'N' : 'S')
                         : (decimal_deg >= 0 ? 'E' : 'W');
-    if (is_lat) {
-        snprintf(out, out_size, "%d\xC2\xB0 %07.4f' %c", deg, min, hemi);
-    } else {
-        snprintf(out, out_size, "%03d\xC2\xB0 %07.4f' %c", deg, min, hemi);
+    if (fmt == 1) { // DD.DDDDDD
+        snprintf(out, out_size, "%.6f\xC2\xB0 %c", a, hemi);
+    } else if (fmt == 2) { // DD MM SS
+        double min_full = (a - deg) * 60.0;
+        int min = (int)min_full;
+        double sec = (min_full - min) * 60.0;
+        if (is_lat) snprintf(out, out_size, "%d\xC2\xB0 %02d' %04.1f\" %c", deg, min, sec, hemi);
+        else        snprintf(out, out_size, "%03d\xC2\xB0 %02d' %04.1f\" %c", deg, min, sec, hemi);
+    } else { // fmt == 0, DD MM.MMMM
+        double min = (a - deg) * 60.0;
+        if (is_lat) snprintf(out, out_size, "%d\xC2\xB0 %07.4f' %c", deg, min, hemi);
+        else        snprintf(out, out_size, "%03d\xC2\xB0 %07.4f' %c", deg, min, hemi);
     }
 }
 
@@ -59,6 +75,20 @@ static float hdop_to_accuracy_ft(float hdop)
     const float uere_m = 5.0f;
     return hdop * uere_m * 3.28084f;
 }
+
+// ---- Distance/speed and Elevation unit conversion ----------------------
+// Every computation in this file works in mph/mi/ft internally (matching
+// gps.c's own knots/meters -> mph/ft conversions that predate this feature)
+// -- these convert to km/h/km/m only at the point a value is handed to a
+// screen setter, per app_settings_get_distance_km()/_get_elevation_m().
+// Kept as tiny wrappers rather than inlining the constants at each call
+// site, so the mi->km/ft->m factors exist in exactly one place each.
+static float conv_speed_mph(float mph, bool km)    { return km ? mph * 1.609344f : mph; }
+static float conv_dist_mi(float mi, bool km)        { return km ? mi * 1.609344f : mi; }
+static float conv_elev_ft(float ft, bool m)         { return m  ? ft * 0.3048f   : ft; }
+static const char *speed_unit_str(bool km) { return km ? "km/h" : "mph"; }
+static const char *dist_unit_str(bool km)  { return km ? "km"   : "mi"; }
+static const char *elev_unit_str(bool m)   { return m  ? "m"    : "ft"; }
 
 // Not relying on M_PI from math.h -- see the identical comment/pattern in
 // main/map_view.c's MAP_PI, same reasoning (avoid a feature-test-macro
@@ -206,7 +236,8 @@ static void format_clock_split(char *hms_out, size_t hms_size,
 }
 
 // Great-circle distance between two WGS84 points, in miles. Used by the
-// Telemetry trip accumulator below -- nothing else in this file needs it.
+// Telemetry trip accumulator below and, since Goto/Nav went from decorative
+// to real, the Nav screen's distance-to-destination too.
 static float haversine_miles(double lat1, double lon1, double lat2, double lon2)
 {
     const double r_mi = 3958.8;
@@ -220,11 +251,27 @@ static float haversine_miles(double lat1, double lon1, double lat2, double lon2)
     return (float)(r_mi * c);
 }
 
-// Telemetry's trip/max-speed/moving-time accumulator. Session-only -- there's
-// no reset button anywhere in the UI yet, so these climb from zero at boot
-// and keep going for as long as the app runs. Distance/moving-time only
-// accrue above MOVING_MPH_THRESHOLD, to keep GPS position jitter while
-// parked from slowly inflating the trip odometer.
+// Initial great-circle bearing from point 1 to point 2, degrees true,
+// 0-360. Standard forward-azimuth formula -- only the Nav screen needs this
+// (Telemetry/Home's trip odometer only ever needed distance).
+static float bearing_deg(double lat1, double lon1, double lat2, double lon2)
+{
+    double phi1 = lat1 * (GPS_UI_PI / 180.0);
+    double phi2 = lat2 * (GPS_UI_PI / 180.0);
+    double dlambda = (lon2 - lon1) * (GPS_UI_PI / 180.0);
+    double y = sin(dlambda) * cos(phi2);
+    double x = cos(phi1) * sin(phi2) - sin(phi1) * cos(phi2) * cos(dlambda);
+    double theta = atan2(y, x) * (180.0 / GPS_UI_PI);
+    return (float)fmod(theta + 360.0, 360.0);
+}
+
+// Telemetry's (and now Home's, see ui_home_set_trip() below) trip/max-speed/
+// moving-time/elevation-gain accumulator. Session-only until
+// gps_ui_bridge_reset_trip() is called (wired to Home's Reset Trip button,
+// see ui_home_set_reset_trip_cb()) -- otherwise these just climb from zero
+// at boot for as long as the app runs. Distance/moving-time/elevation-gain
+// only accrue above MOVING_MPH_THRESHOLD, to keep GPS position/altitude
+// jitter while parked from slowly inflating the trip odometer.
 #define MOVING_MPH_THRESHOLD 1.15f  // ~1 knot
 
 static bool   s_have_prev_pos;
@@ -232,6 +279,7 @@ static double s_prev_lat, s_prev_lon;
 static float  s_trip_miles;
 static float  s_max_mph;
 static uint32_t s_moving_ticks;
+static float  s_elev_gain_ft;
 
 // Vertical speed (fpm) from consecutive altitude readings, 500ms apart --
 // noisy on its own (GPS altitude jitter amplified ~120x by the short
@@ -245,6 +293,18 @@ static void tick(void)
 {
     gps_state_t st = gps_get_state();
     bool fix = gps_has_fix();
+
+    // Which constellations currently have >=1 satellite in view, and how
+    // many satellites total are used in the fix -- computed once here
+    // (unlocked, cheap) rather than per-screen, since both Telemetry's
+    // SIGNAL legend and Settings' Constellations row want it.
+    bool const_seen[5] = { false, false, false, false, false };
+    int sats_used_total = 0;
+    for (int i = 0; i < st.satellite_count; i++) {
+        const gps_satellite_t *sat = &st.satellites[i];
+        if (sat->used_in_solution) sats_used_total++;
+        if (sat->constellation < 5) const_seen[sat->constellation] = true;
+    }
 
     if (!lvgl_port_lock(50)) return;
 
@@ -276,14 +336,19 @@ static void tick(void)
     }
 
     if (st.latlon_valid) {
+        int coord_fmt = app_settings_get_coord_format();
         char lat_buf[32], lon_buf[32];
-        format_ddm(st.latitude_deg, true, lat_buf, sizeof(lat_buf));
-        format_ddm(st.longitude_deg, false, lon_buf, sizeof(lon_buf));
+        format_coord(st.latitude_deg, true, coord_fmt, lat_buf, sizeof(lat_buf));
+        format_coord(st.longitude_deg, false, coord_fmt, lon_buf, sizeof(lon_buf));
         ui_home_set_position(h, lat_buf, lon_buf);
     }
 
+    bool dist_km = app_settings_get_distance_km();
+    bool elev_m  = app_settings_get_elevation_m();
+
     if (st.speed_valid) {
-        ui_home_set_speed(h, st.speed_knots * 1.15078f);
+        float mph = st.speed_knots * 1.15078f;
+        ui_home_set_speed(h, conv_speed_mph(mph, dist_km), speed_unit_str(dist_km));
     }
 
     // heading_deg comes from RMC and is only meaningful in motion -- GPS
@@ -293,11 +358,13 @@ static void tick(void)
     ui_home_set_heading(h, (int)(st.heading_deg + 0.5f), cardinal_8(st.heading_deg));
 
     if (st.altitude_valid) {
-        ui_home_set_altitude(h, (int)(st.altitude_m * 3.28084f + 0.5f));
+        float alt_ft = st.altitude_m * 3.28084f;
+        ui_home_set_altitude(h, (int)(conv_elev_ft(alt_ft, elev_m) + 0.5f), elev_unit_str(elev_m));
     }
 
     if (st.hdop_valid) {
-        ui_home_set_accuracy(h, hdop_to_accuracy_ft(st.hdop));
+        float acc_ft = hdop_to_accuracy_ft(st.hdop);
+        ui_home_set_accuracy(h, conv_elev_ft(acc_ft, elev_m), elev_unit_str(elev_m));
     }
 
     const char *sat_quality = st.sats_in_use >= 7 ? "Good"
@@ -318,15 +385,17 @@ static void tick(void)
         ui_home_set_local_time(h, hms_buf, ampm_buf, date_buf, tz_abbrev);
     }
 
-    // Deliberately not touched: Home's own trip widget (needs avg-speed and
-    // elevation-gain too, which the accumulator below doesn't compute -- see
-    // gps_ui_bridge.h) and battery percent (no fuel-gauge hardware wired up
-    // yet). Both stay at their ui_home_create() demo values rather than
-    // being fed something fake.
+    // Home's trip widget is set further below, alongside Telemetry's -- both
+    // read the same accumulator, computed there. Battery percent deliberately
+    // NOT touched: no fuel-gauge hardware wired up yet, stays at
+    // ui_home_create()'s demo value rather than being fed something fake.
 
     // ---- Telemetry screen -------------------------------------------------
-    // Same live gps_get_state() snapshot as Home, above -- reuses the speed/
-    // heading/ddm values already computed there instead of recomputing them.
+    // Trimmed down to only what Home's own cards don't already show (see
+    // ui_telemetry_create()'s comment) -- speed/heading/DDM position/trip
+    // are still computed below where something else still needs them
+    // (the trip accumulator, Home's own cards), just no longer also pushed
+    // into Telemetry setters that no longer exist.
     ui_telemetry_t *t = ui_telemetry();
     if (t) {
         ui_status_set_fix(&t->status, fix ? "GPS FIX" : "NO FIX", fix);
@@ -342,19 +411,13 @@ static void tick(void)
         bool moving_now = false;
         if (st.speed_valid) {
             speed_mph = st.speed_knots * 1.15078f;
-            ui_telemetry_set_speed(t, speed_mph);
             moving_now = speed_mph > MOVING_MPH_THRESHOLD;
             if (speed_mph > s_max_mph) s_max_mph = speed_mph;
             if (moving_now) s_moving_ticks++;
         }
 
-        ui_telemetry_set_heading(t, (int)(st.heading_deg + 0.5f));
-
         if (st.latlon_valid) {
-            char lat_buf[32], lon_buf[32];
-            format_ddm(st.latitude_deg, true, lat_buf, sizeof(lat_buf));
-            format_ddm(st.longitude_deg, false, lon_buf, sizeof(lon_buf));
-            ui_telemetry_set_position(t, lat_buf, lon_buf, st.latitude_deg, st.longitude_deg);
+            ui_telemetry_set_position(t, st.latitude_deg, st.longitude_deg);
 
             // Only add to the trip odometer while actually moving (per
             // MOVING_MPH_THRESHOLD above) -- otherwise parked GPS jitter
@@ -378,20 +441,31 @@ static void tick(void)
                 float raw_fpm = (alt_ft - s_prev_alt_ft) * (60000.0f / TICK_PERIOD_MS);
                 s_vspeed_fpm_ema = 0.8f * s_vspeed_fpm_ema + 0.2f * raw_fpm;
                 vspeed_fpm = s_vspeed_fpm_ema;
+
+                // Elevation gain: same moving-gated raw-delta approach as
+                // the trip odometer above, for the same reason (parked GPS
+                // altitude jitter shouldn't slowly inflate "gain" out of
+                // nothing). Uses the raw per-tick delta, not the smoothed
+                // EMA -- matches the odometer's own precedent of not
+                // smoothing, though unlike distance this really is just
+                // summing noisy jitter while moving, so treat it as a
+                // rough total, not a precise one.
+                if (moving_now) {
+                    float delta_ft = alt_ft - s_prev_alt_ft;
+                    if (delta_ft > 0.0f) s_elev_gain_ft += delta_ft;
+                }
             }
             s_prev_alt_ft = alt_ft;
             s_have_prev_alt = true;
-            ui_telemetry_set_altitude(t, (int)(alt_ft + 0.5f), (int)(vspeed_fpm + 0.5f));
+            // Same axis as elevation (a rate of elevation change), so it
+            // follows app_settings_get_elevation_m() too -- fpm becomes
+            // m/min rather than being a separate unit choice of its own.
+            float vspeed_disp = elev_m ? vspeed_fpm * 0.3048f : vspeed_fpm;
+            ui_telemetry_set_vspeed(t, (int)(vspeed_disp + 0.5f), elev_m ? "m/min" : "fpm");
         }
 
-        // "visible" is really just sats_in_use again -- GGA only reports
-        // satellites *used* in the fix, not the full visible constellation,
-        // and gps.c doesn't parse GSV (the sentence that would give per-
-        // satellite visibility/SNR) yet. Real used-count beats a frozen
-        // demo "visible" number.
         if (st.hdop_valid) {
-            ui_telemetry_set_quality(t, st.sats_in_use, st.sats_in_use,
-                                     st.hdop, hdop_to_accuracy_ft(st.hdop));
+            ui_telemetry_set_hdop(t, st.hdop);
         }
 
         // Unlike Home's single (now Central) clock, Telemetry has room for
@@ -404,18 +478,214 @@ static void tick(void)
             ui_telemetry_set_time(t, local_buf, utc_buf, tz_abbrev);
         }
 
+        // Feeds Home's trip card only now -- Telemetry's own TRIP/MAX SPEED/
+        // MOVING row is gone (see ui_telemetry_create()'s comment), this
+        // was its last use on this screen.
         uint32_t moving_s = (uint32_t)(s_moving_ticks * (TICK_PERIOD_MS / 1000.0f));
-        char moving_buf[16];
-        snprintf(moving_buf, sizeof(moving_buf), "%u:%02u",
-                 (unsigned)(moving_s / 3600), (unsigned)((moving_s % 3600) / 60));
-        ui_telemetry_set_trip(t, s_trip_miles, s_max_mph, moving_buf);
+        char moving_hms_buf[16];
+        snprintf(moving_hms_buf, sizeof(moving_hms_buf), "%u:%02u:%02u",
+                 (unsigned)(moving_s / 3600), (unsigned)((moving_s % 3600) / 60),
+                 (unsigned)(moving_s % 60));
+        float avg_mph = 0.0f;
+        if (s_moving_ticks > 0) {
+            float moving_hours = s_moving_ticks * (TICK_PERIOD_MS / 1000.0f) / 3600.0f;
+            avg_mph = s_trip_miles / moving_hours;
+        }
+        ui_home_set_trip(h, conv_dist_mi(s_trip_miles, dist_km), moving_hms_buf,
+                         conv_speed_mph(avg_mph, dist_km), conv_speed_mph(s_max_mph, dist_km),
+                         (int)(conv_elev_ft(s_elev_gain_ft, elev_m) + 0.5f),
+                         dist_unit_str(dist_km), speed_unit_str(dist_km), elev_unit_str(elev_m));
 
-        // Signal bars / constellation list stay at ui_telemetry_create()'s
-        // demo values -- would need GSV parsing (per-satellite SNR) that
-        // gps.c doesn't do yet, same limitation as the "visible" count above.
+        // Signal bars -- one per satellite gps.c's GSV/GSA parsing currently
+        // has in view, real SNR/constellation/used-in-solution per bar. See
+        // gps.h's gps_satellite_t; ui_telemetry_set_signal() takes plain
+        // arrays rather than that struct directly to keep this screen's
+        // header decoupled from gps.h's types (same reasoning as its other
+        // setters).
+        // "#RRGGBB text#" recolor spans (see ui_telemetry_create()'s
+        // lv_label_set_recolor()) so each name matches its own bars below --
+        // hex values must match ui_theme.h's UI_C_*_HEX (bright variants).
+        static const char *const_names[5] = {
+            "#" UI_C_GPS_HEX     " GPS#",
+            "#" UI_C_GLONASS_HEX " GLONASS#",
+            "#" UI_C_GALILEO_HEX " GALILEO#",
+            "#" UI_C_BEIDOU_HEX  " BEIDOU#",
+            "#" UI_C_QZSS_HEX    " QZSS#",
+        };
+        uint8_t sig_snr[UI_TELEM_BARS];
+        bool    sig_has_snr[UI_TELEM_BARS];
+        uint8_t sig_const[UI_TELEM_BARS];
+        bool    sig_used[UI_TELEM_BARS];
+        int n = st.satellite_count;
+        for (int i = 0; i < n && i < UI_TELEM_BARS; i++) {
+            const gps_satellite_t *sat = &st.satellites[i];
+            sig_snr[i]      = sat->snr;
+            sig_has_snr[i]  = sat->has_snr;
+            sig_const[i]    = (uint8_t)sat->constellation;
+            sig_used[i]     = sat->used_in_solution;
+        }
+        if (n > UI_TELEM_BARS) n = UI_TELEM_BARS;
+
+        // snprintf-with-running-offset rather than strlcat() -- this
+        // codebase already avoids libc's BSD string extensions elsewhere
+        // (see ui_goto.c's lv_strlcpy() use instead of plain strlcpy()).
+        // 128 bytes comfortably covers all 5 colored spans + " | " separators.
+        char const_buf[128];
+        int const_len = 0;
+        bool any_const = false;
+        for (int c = 0; c < 5; c++) {
+            if (!const_seen[c]) continue;
+            const_len += snprintf(const_buf + const_len, sizeof(const_buf) - (size_t)const_len,
+                                  "%s%s", any_const ? " | " : "", const_names[c]);
+            any_const = true;
+        }
+        if (!any_const) snprintf(const_buf, sizeof(const_buf), "none in view");
+
+        ui_telemetry_set_signal(t, sig_snr, sig_has_snr, sig_const, sig_used,
+                                n, sats_used_total, const_buf);
+    }
+
+    // ---- Nav screen (active navigation) ------------------------------------
+    // Goto/Nav went from decorative to real (see design_ui.c's goto_start_cb(),
+    // which wires ui_goto_parse() into ui_set_destination()) -- distance/
+    // bearing/closure/ETA computed fresh every tick from the live position
+    // and whatever destination was set when "Start Navigation" was tapped.
+    // Cross-track (how far off the direct course line) deliberately NOT
+    // computed -- would need storing the position navigation started from
+    // to define that line, separate state this doesn't have yet;
+    // ui_nav_create()'s own demo value is left alone rather than faked with
+    // a real-looking number that isn't.
+    ui_nav_t *nav_ui = ui_nav();
+    double dest_lat, dest_lon;
+    if (nav_ui && ui_is_navigating() && st.latlon_valid &&
+        ui_get_destination(&dest_lat, &dest_lon)) {
+        float dist_mi = haversine_miles(st.latitude_deg, st.longitude_deg, dest_lat, dest_lon);
+        float brg = bearing_deg(st.latitude_deg, st.longitude_deg, dest_lat, dest_lon);
+        int heading = (int)(st.heading_deg + 0.5f);
+        float nav_speed_mph = st.speed_valid ? st.speed_knots * 1.15078f : 0.0f;
+
+        ui_nav_set_bearing(nav_ui, (int)(brg + 0.5f), heading);
+        ui_nav_set_distance(nav_ui, conv_dist_mi(dist_mi, dist_km), dist_unit_str(dist_km));
+        ui_nav_set_speed(nav_ui, conv_speed_mph(nav_speed_mph, dist_km), speed_unit_str(dist_km));
+
+        // Velocity made good -- current speed projected onto the bearing
+        // to the destination, so it reads near-zero/negative when moving
+        // across or away from it instead of always showing full raw speed
+        // regardless of direction actually traveled.
+        float angle_diff = (float)((brg - heading) * (GPS_UI_PI / 180.0));
+        float vmg_mph = nav_speed_mph * cosf(angle_diff);
+        ui_nav_set_closure(nav_ui, conv_speed_mph(vmg_mph, dist_km), speed_unit_str(dist_km));
+
+        if (vmg_mph > 0.5f) {
+            float hours_to_go = dist_mi / vmg_mph;
+            uint32_t secs_to_go = (uint32_t)(hours_to_go * 3600.0f);
+            char time_to_go[16];
+            snprintf(time_to_go, sizeof(time_to_go), "%u:%02u",
+                     (unsigned)(secs_to_go / 3600), (unsigned)((secs_to_go % 3600) / 60));
+            char eta_text[16] = "--:--";
+            if (have_local) {
+                // Simple minutes-of-day add-and-wrap, same spirit as this
+                // file's other clock math -- fine for a same-day ETA
+                // display, not a real calendar-aware add.
+                int total_min = local_tm.tm_hour * 60 + local_tm.tm_min + (int)(hours_to_go * 60.0f);
+                total_min = ((total_min % 1440) + 1440) % 1440;
+                snprintf(eta_text, sizeof(eta_text), "%d:%02d", total_min / 60, total_min % 60);
+            }
+            ui_nav_set_eta(nav_ui, eta_text, time_to_go);
+        } else {
+            ui_nav_set_eta(nav_ui, "--:--", "--:--");
+        }
+    }
+
+    // ---- Settings screen ---------------------------------------------------
+    // DISPLAY (brightness/keep-screen-on), LOGGING & STORAGE, and UNITS &
+    // FORMAT (coordinate format, distance/speed, elevation, 24-hour time)
+    // are all fully real now. Constellations/Update rate/Time zone below
+    // are real *displays* of measured/computed values, not editable
+    // settings -- this app has no write path to the GPS module to actually
+    // reconfigure its constellations or update rate (TX line wired but
+    // unused, see gps.c's file header), and Time zone is Central-only by
+    // design (see us_central_from_utc()'s own comment), not a picker.
+    ui_settings_t *set_ui = ui_settings();
+    if (set_ui) {
+        ui_settings_set_track_log(set_ui, gps_log_active());
+
+        static const char *const_abbrev[5] = { "GPS", "GLO", "GAL", "BEI", "QZS" };
+        char const_short[48];
+        int const_short_len = 0;
+        bool any_const_short = false;
+        for (int c = 0; c < 5; c++) {
+            if (!const_seen[c]) continue;
+            const_short_len += snprintf(const_short + const_short_len,
+                                        sizeof(const_short) - (size_t)const_short_len,
+                                        "%s%s", any_const_short ? " + " : "", const_abbrev[c]);
+            any_const_short = true;
+        }
+        if (any_const_short) {
+            ui_settings_set_value(set_ui, UI_SET_CONSTELLATIONS, const_short);
+        }
+
+        if (st.fix_rate_valid) {
+            char rate_buf[16];
+            snprintf(rate_buf, sizeof(rate_buf), "%.0f Hz", st.fix_rate_hz);
+            ui_settings_set_value(set_ui, UI_SET_UPDATE_RATE, rate_buf);
+        }
+
+        if (have_local) {
+            // Central-only (see this block's own comment above) -- CDT/CST
+            // are the only two abbreviations us_central_from_utc() ever
+            // returns, so their UTC offsets can just be hardcoded here
+            // rather than computed generically.
+            char tz_buf[24];
+            snprintf(tz_buf, sizeof(tz_buf), "%s (UTC%s)", tz_abbrev,
+                     strcmp(tz_abbrev, "CDT") == 0 ? "-5" : "-6");
+            ui_settings_set_value(set_ui, UI_SET_TIMEZONE, tz_buf);
+        }
+
+        // SD usage walks the FAT free-cluster chain (esp_vfs_fat_info()) --
+        // real work, unlike everything else this task touches. Once every
+        // ~10s (TICK_PERIOD_MS * 20) is plenty for a number nobody's
+        // watching change in real time.
+        static int s_storage_tick;
+        if (++s_storage_tick >= 20) {
+            s_storage_tick = 0;
+            float used_gb, total_gb;
+            if (sd_card_get_usage(&used_gb, &total_gb)) {
+                ui_settings_set_storage(set_ui, used_gb, total_gb);
+            }
+        }
+
+        // Line 1 (FW version/serial number) has nothing real to show yet --
+        // kept as the same static placeholder ui_settings_create() shows at
+        // boot, just re-passed every tick since ui_settings_set_footer()
+        // always sets both lines together. Only line 2's uptime is real.
+        // "AT6668", not the original demo text's "u-blox M10" -- see
+        // gps.c's own file header for the real chipset (M5Stack GPS Module
+        // v2.1). The demo text named the wrong vendor entirely.
+        int64_t uptime_s = esp_timer_get_time() / 1000000;
+        char line2[48];
+        snprintf(line2, sizeof(line2), "AT6668 | uptime %d:%02d:%02d",
+                 (int)(uptime_s / 3600), (int)((uptime_s % 3600) / 60), (int)(uptime_s % 60));
+        ui_settings_set_footer(set_ui, "Tab5 | FW 1.4.2 | SN 0A31-7742", line2);
     }
 
     lvgl_port_unlock();
+}
+
+// Zeroes the trip accumulator above -- wired to Home's Reset Trip button
+// via ui_home_set_reset_trip_cb() below; the yes/no confirmation itself is
+// entirely the UI's concern (main/ui_home.c), this just does the reset.
+// Clears the have_prev_* flags too, not just the running totals -- otherwise
+// the very next tick would compute one huge bogus distance/elevation delta
+// against the stale pre-reset position/altitude instead of starting clean.
+void gps_ui_bridge_reset_trip(void)
+{
+    s_trip_miles = 0.0f;
+    s_max_mph = 0.0f;
+    s_moving_ticks = 0;
+    s_elev_gain_ft = 0.0f;
+    s_have_prev_pos = false;
+    s_have_prev_alt = false;
 }
 
 static void bridge_task(void *arg)
@@ -430,5 +700,8 @@ static void bridge_task(void *arg)
 
 void gps_ui_bridge_start(void)
 {
+    ui_home_t *h = ui_home();
+    if (h) ui_home_set_reset_trip_cb(h, gps_ui_bridge_reset_trip);
+
     xTaskCreate(bridge_task, "gps_ui_bridge", 4096, NULL, 3, NULL);
 }

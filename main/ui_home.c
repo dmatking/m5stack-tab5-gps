@@ -2,11 +2,16 @@
 
 static ui_home_t s_home;
 
-/* A metric card: caption on top, big value, unit under it. */
+/* A metric card: caption on top, big value, unit under it. top_pad is extra
+ * space inserted between caption and value -- SPEED/ALTITUDE pass the
+ * offset that lines their value up with HEADING's compass dial (ui_compass()
+ * centers its own number well below the caption, inside the dial), without
+ * moving the caption itself. 0 for a plain top-anchored card. */
 static lv_obj_t *metric_card(lv_obj_t *parent, int grow, const char *caption,
                              const char *value, const lv_font_t *value_font,
                              const char *unit, lv_color_t value_color,
-                             lv_obj_t **out_value)
+                             lv_coord_t top_pad, lv_obj_t **out_value,
+                             lv_obj_t **out_unit)
 {
     lv_obj_t *c = ui_card(parent);
     lv_obj_set_height(c, LV_PCT(100));
@@ -16,15 +21,29 @@ static lv_obj_t *metric_card(lv_obj_t *parent, int grow, const char *caption,
                           LV_FLEX_ALIGN_CENTER);
 
     ui_caption(c, caption);
+    if (top_pad > 0) {
+        lv_obj_t *spacer = ui_box(c);
+        lv_obj_set_size(spacer, 1, top_pad);
+    }
     lv_obj_t *v = ui_label(c, value, value_font, value_color);
     if (out_value) *out_value = v;
-    if (unit) ui_label(c, unit, ui_font.s, UI_C_MUTED);
+    if (unit) {
+        lv_obj_t *u = ui_label(c, unit, ui_font.s, UI_C_MUTED);
+        if (out_unit) *out_unit = u;
+    }
     return c;
 }
 
-/* One column of the trip strip. */
+/* One column of the trip strip. one_line_caption is true for DISTANCE/
+ * MOVING -- their captions are one line while AVG/MAX SPEED and ELEV GAIN's
+ * are two ("SPEED\nAVG" etc.), and without this their values sit visibly
+ * higher, out of line with the other three (confirmed via a photographed-
+ * alignment comparison). Adds a same-size-as-a-caption-line spacer instead
+ * of touching the caption itself, so the titles stay put and only the
+ * value/unit move down to match. */
 static void trip_cell(lv_obj_t *parent, const char *caption, const char *value,
-                      const char *unit, bool left_rule, lv_obj_t **out_value)
+                      const char *unit, bool left_rule, bool one_line_caption,
+                      lv_obj_t **out_value, lv_obj_t **out_unit)
 {
     lv_obj_t *cell = ui_box(parent);
     lv_obj_set_height(cell, LV_SIZE_CONTENT);
@@ -37,15 +56,112 @@ static void trip_cell(lv_obj_t *parent, const char *caption, const char *value,
         lv_obj_set_style_border_width(cell, 1, 0);
         lv_obj_set_style_border_side(cell, LV_BORDER_SIDE_LEFT, 0);
     }
-    ui_caption(cell, caption);
+    lv_obj_t *cap = ui_caption(cell, caption);
+    // The cell's own flex align only centers the caption *label* as a
+    // block; a two-line caption (e.g. "SPEED\nAVG") auto-sizes to its
+    // widest line and left-aligns the shorter one under it by default,
+    // which reads as off-center. Needed even for single-line captions'
+    // sake of not special-casing this per call -- harmless there since a
+    // single line has nothing to center against.
+    lv_obj_set_style_text_align(cap, LV_TEXT_ALIGN_CENTER, 0);
+    if (one_line_caption) {
+        lv_obj_t *spacer = ui_box(cell);
+        lv_obj_set_size(spacer, 1, 22); // ~one ui_font.xs line, matched against a real capture
+    }
     *out_value = ui_label(cell, value, ui_font.semi_m, UI_C_TEXT);
-    ui_label(cell, unit, ui_font.xs, UI_C_MUTED);
+    lv_obj_t *u = ui_label(cell, unit, ui_font.xs, UI_C_MUTED);
+    if (out_unit) *out_unit = u;
 }
 
 static void track_btn_cb(lv_event_t *e)
 {
     ui_home_t *h = (ui_home_t *)lv_event_get_user_data(e);
     ui_home_set_tracking(h, !h->tracking);
+}
+
+/* Reset Trip confirm dialog -- a scrim + small card, built fresh on demand
+ * and torn down on either button rather than pre-built/hidden. Only one can
+ * ever be open at a time (the Reset Trip button is the only thing that
+ * opens it), so a single file-static handle is enough to track it. */
+static lv_obj_t *s_reset_confirm;
+
+static void reset_confirm_close(void)
+{
+    if (s_reset_confirm) {
+        lv_obj_delete(s_reset_confirm);
+        s_reset_confirm = NULL;
+    }
+}
+
+static void reset_confirm_no_cb(lv_event_t *e)
+{
+    (void)e;
+    reset_confirm_close();
+}
+
+static void reset_confirm_yes_cb(lv_event_t *e)
+{
+    ui_home_t *h = (ui_home_t *)lv_event_get_user_data(e);
+    if (h->reset_trip_cb) h->reset_trip_cb(); // zeroes gps_ui_bridge.c's real accumulator
+    // Instant feedback -- the next tick would repaint these anyway once the
+    // accumulator above is actually zeroed, but no reason to make the user
+    // wait up to a tick period to see it took effect. Units unchanged, so
+    // pass NULL for all three unit strings rather than re-deriving them here.
+    ui_home_set_trip(h, 0.0f, "0:00:00", 0.0f, 0.0f, 0, NULL, NULL, NULL);
+    reset_confirm_close();
+}
+
+static void reset_trip_btn_cb(lv_event_t *e)
+{
+    ui_home_t *h = (ui_home_t *)lv_event_get_user_data(e);
+    if (s_reset_confirm) return; // already open
+
+    // Full-screen dim scrim, added as the screen's last (topmost) child --
+    // clickable so it absorbs taps on anything behind it, same effect as a
+    // modal without needing a separate top layer. h->screen lays out its
+    // children (body + navbar) in a flex column, so without FLOATING this
+    // would just become a 3rd flex item positioned *after* the navbar
+    // instead of covering it -- confirmed on real hardware: the navbar
+    // stayed fully visible/tappable (including switching tabs right out
+    // from under an open confirm dialog) until this was added.
+    lv_obj_t *scrim = ui_box(h->screen);
+    lv_obj_add_flag(scrim, LV_OBJ_FLAG_FLOATING); // skip the screen's flex layout
+    lv_obj_set_pos(scrim, 0, 0);
+    lv_obj_set_size(scrim, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(scrim, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(scrim, LV_OPA_60, 0);
+    lv_obj_add_flag(scrim, LV_OBJ_FLAG_CLICKABLE);
+    s_reset_confirm = scrim;
+
+    lv_obj_t *card = ui_card(scrim);
+    lv_obj_set_width(card, LV_PCT(80));
+    lv_obj_set_height(card, LV_SIZE_CONTENT);
+    lv_obj_center(card);
+    lv_obj_set_style_pad_all(card, 20, 0);
+    ui_flex_col(card, 16);
+    lv_obj_set_flex_align(card, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+
+    ui_label(card, "Reset trip data?", ui_font.semi_m, UI_C_TEXT);
+    lv_obj_t *desc = ui_label(card, "Distance, moving time, and speed/elevation totals go back to zero.",
+                              ui_font.s, UI_C_MUTED);
+    lv_obj_set_width(desc, LV_PCT(100));
+    lv_label_set_long_mode(desc, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_align(desc, LV_TEXT_ALIGN_CENTER, 0);
+
+    lv_obj_t *btns = ui_box(card);
+    lv_obj_set_size(btns, LV_PCT(100), LV_SIZE_CONTENT);
+    ui_flex_row(btns, 12);
+    lv_obj_t *bl = ui_box(btns);
+    lv_obj_set_size(bl, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_grow(bl, 1);
+    lv_obj_t *no_btn = ui_button(bl, "Cancel", UI_C_CARD, UI_C_MUTED, true, UI_C_BORDER, 64);
+    lv_obj_add_event_cb(no_btn, reset_confirm_no_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *br = ui_box(btns);
+    lv_obj_set_size(br, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_grow(br, 1);
+    lv_obj_t *yes_btn = ui_button(br, "Reset", UI_C_CARD, UI_C_RED, true, lv_color_hex(0x63303A), 64);
+    lv_obj_add_event_cb(yes_btn, reset_confirm_yes_cb, LV_EVENT_CLICKED, h);
 }
 
 ui_home_t *ui_home_create(lv_event_cb_t tab_cb)
@@ -85,22 +201,10 @@ ui_home_t *ui_home_create(lv_event_cb_t tab_cb)
     h->pos_line1 = ui_label(pos, "32\xC2\xB0 54.1234' N", ui_font.semi_l, UI_C_TEXT);
     h->pos_line2 = ui_label(pos, "097\xC2\xB0 19.5678' W", ui_font.semi_l, UI_C_TEXT);
 
-    lv_obj_t *pos_sub = ui_box(pos);
-    lv_obj_set_size(pos_sub, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    ui_flex_row(pos_sub, 20);
-    lv_obj_set_flex_align(pos_sub, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_CENTER);
-    // "+/-" not "\xC2\xB1" (±) -- LVGL's built-in Montserrat fonts only
-    // include ASCII plus the degree sign, nothing else outside that; ± (and
-    // every other non-ASCII punctuation this design used) rendered as a
-    // tofu box on real hardware. Confirmed via a real ± usage elsewhere in
-    // this same file/other UI files (photographed on the actual panel).
-    h->pos_acc = ui_label(pos_sub, LV_SYMBOL_WARNING " +/- 9.4 ft", ui_font.s, UI_C_MUTED);
-    lv_obj_t *bar = ui_box(pos_sub);
-    lv_obj_set_size(bar, 1, 24);
-    lv_obj_set_style_bg_color(bar, UI_C_BORDER, 0);
-    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
-    h->pos_alt = ui_label(pos_sub, "1,248 ft", ui_font.s, UI_C_MUTED);
+    // No accuracy/altitude sub-line here anymore -- it duplicated the
+    // ALTITUDE card and GPS ACCURACY card in the row below with no added
+    // info, just noise. ui_home_set_accuracy()/ui_home_set_altitude() used
+    // to update both; now just the cards.
 
     /* speed / heading / altitude ----------------------------------------- */
     lv_obj_t *row1 = ui_box(body);
@@ -108,8 +212,13 @@ ui_home_t *ui_home_create(lv_event_cb_t tab_cb)
     lv_obj_set_height(row1, 262);
     ui_flex_row(row1, 12);
 
+    // 49px top_pad on SPEED/ALTITUDE: HEADING's ui_compass() centers its
+    // "000" well below the caption, inside the 180px dial -- without this,
+    // SPEED/ALTITUDE's numbers sit noticeably higher than HEADING's,
+    // confirmed via a photographed-alignment comparison. Not derived from
+    // exact font metrics, just measured/adjusted against a real capture.
     metric_card(row1, 10, "SPEED", "42", ui_font.num_l, "mph", UI_C_TEXT,
-                &h->speed);
+                49, &h->speed, &h->speed_unit);
 
     lv_obj_t *hcard = ui_card(row1);
     lv_obj_set_height(hcard, LV_PCT(100));
@@ -121,7 +230,7 @@ ui_home_t *ui_home_create(lv_event_cb_t tab_cb)
     ui_compass(hcard, 180, &h->heading_val, &h->heading_sub);
 
     metric_card(row1, 10, "ALTITUDE", "1,248", ui_font.num_l, "ft", UI_C_TEXT,
-                &h->altitude);
+                49, &h->altitude, &h->altitude_unit);
 
     /* satellites / accuracy / time --------------------------------------- */
     lv_obj_t *row2 = ui_box(body);
@@ -136,19 +245,13 @@ ui_home_t *ui_home_create(lv_event_cb_t tab_cb)
     lv_obj_set_flex_align(sat, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
     ui_caption(sat, "SATELLITES");
-    lv_obj_t *bars = ui_box(sat);
-    lv_obj_set_size(bars, LV_SIZE_CONTENT, 52);
-    ui_flex_row(bars, 6);
-    lv_obj_set_flex_align(bars, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END,
-                          LV_FLEX_ALIGN_END);
-    const int bar_pct[4] = { 36, 58, 78, 100 };
-    for (int i = 0; i < 4; i++) {
-        h->sat_bars[i] = ui_box(bars);
-        lv_obj_set_size(h->sat_bars[i], 13, LV_PCT(bar_pct[i]));
-        lv_obj_set_style_radius(h->sat_bars[i], 2, 0);
-        lv_obj_set_style_bg_color(h->sat_bars[i], UI_C_GREEN, 0);
-        lv_obj_set_style_bg_opa(h->sat_bars[i], LV_OPA_COVER, 0);
-    }
+    // Was a 4-bar phone-signal-style meter -- at 52px tall, noticeably
+    // taller than GPS ACCURACY's LV_SYMBOL_GPS glyph and TIME's 32px clock
+    // icon in the same row, which pushed this card's count down out of line
+    // with theirs (confirmed via a photographed-alignment comparison). A
+    // satellite icon at the same 32px size as the clock icon fixes the
+    // alignment and reads more literally as "satellites" anyway.
+    ui_satellite_icon(sat, 32, UI_C_GREEN);
     h->sat_count   = ui_label(sat, "14", ui_font.num_m, UI_C_TEXT);
     h->sat_quality = ui_label(sat, "Good", ui_font.s, UI_C_MUTED);
 
@@ -190,12 +293,14 @@ ui_home_t *ui_home_create(lv_event_cb_t tab_cb)
     h->utc_date = ui_label(utc, "May 26, 2025", ui_font.s, UI_C_MUTED);
 
     /* trip strip ---------------------------------------------------------- */
+    // No ui_mark_placeholder() -- real data now, fed by gps_ui_bridge.c's
+    // trip accumulator (see its own comment for the moving-gated distance/
+    // elevation-gain logic).
     lv_obj_t *trip = ui_card(body);
-    ui_mark_placeholder(trip); // gps_ui_bridge.c never calls ui_home_set_trip() -- see project notes
     lv_obj_set_width(trip, LV_PCT(100));
     lv_obj_set_height(trip, LV_SIZE_CONTENT);
-    lv_obj_set_style_pad_all(trip, 14, 0);
-    ui_flex_col(trip, 10);
+    lv_obj_set_style_pad_all(trip, 18, 0);
+    ui_flex_col(trip, 14);
     lv_obj_set_flex_align(trip, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
     ui_caption(trip, "TRIP (Since Reset)");
@@ -203,11 +308,22 @@ ui_home_t *ui_home_create(lv_event_cb_t tab_cb)
     lv_obj_t *cells = ui_box(trip);
     lv_obj_set_size(cells, LV_PCT(100), LV_SIZE_CONTENT);
     ui_flex_row(cells, 0);
-    trip_cell(cells, "DISTANCE", "12.48",   "mi",    false, &h->trip_distance);
-    trip_cell(cells, "MOVING",   "0:28:47", "h:m:s", true,  &h->trip_moving);
-    trip_cell(cells, "AVG SPEED","25.9",    "mph",   true,  &h->trip_avg);
-    trip_cell(cells, "MAX SPEED","68.3",    "mph",   true,  &h->trip_max);
-    trip_cell(cells, "ELEV GAIN","512",     "ft",    true,  &h->trip_gain);
+    trip_cell(cells, "DISTANCE",    "12.48",   "mi",    false, true,  &h->trip_distance, &h->trip_distance_unit);
+    trip_cell(cells, "MOVING",      "0:28:47", "h:m:s", true,  true,  &h->trip_moving, NULL);
+    // Two lines each (was one, cramped) -- same words, just wrapped, not
+    // abbreviated. SPEED first (not AVG/MAX first) so the shared word lines
+    // up between these two adjacent cells, with the distinguishing word
+    // underneath.
+    trip_cell(cells, "SPEED\nAVG",  "25.9",    "mph",   true,  false, &h->trip_avg, &h->trip_avg_unit);
+    trip_cell(cells, "SPEED\nMAX",  "68.3",    "mph",   true,  false, &h->trip_max, &h->trip_max_unit);
+    trip_cell(cells, "ELEV\nGAIN",  "512",     "ft",    true,  false, &h->trip_gain, &h->trip_gain_unit);
+
+    /* Below the card, not inside it -- same footprint as Start Tracking
+     * below, just a secondary/destructive action (outline + red, matching
+     * ui_nav.c's "Stop Nav" button) rather than the primary blue fill. */
+    lv_obj_t *reset_btn = ui_button(body, "Reset Trip", UI_C_CARD, UI_C_RED,
+                                    true, lv_color_hex(0x63303A), 64);
+    lv_obj_add_event_cb(reset_btn, reset_trip_btn_cb, LV_EVENT_CLICKED, h);
 
     /* spacer + primary action -------------------------------------------- */
     lv_obj_t *spacer = ui_box(body);
@@ -232,20 +348,27 @@ void ui_home_set_position(ui_home_t *h, const char *lat, const char *lon)
     lv_label_set_text(h->pos_line2, lon);
 }
 
-void ui_home_set_accuracy(ui_home_t *h, float feet)
+void ui_home_set_accuracy(ui_home_t *h, float value, const char *unit)
 {
     if (!h) return;
-    lv_label_set_text_fmt(h->pos_acc, "+/- %.1f ft", feet);
-    lv_label_set_text_fmt(h->acc_val, "+/- %.1f ft", feet);
-    const char *q = feet <= 16.0f ? "Good" : (feet <= 40.0f ? "Fair" : "Poor");
+    lv_label_set_text_fmt(h->acc_val, "+/- %.1f %s", value, unit ? unit : "ft");
+    // Quality thresholds are unit-specific -- 16ft/40ft in feet, converted
+    // to their meter equivalents (~4.9m/~12.2m) when in meters, so "Good"/
+    // "Fair"/"Poor" mean the same real-world accuracy either way.
+    bool is_m = unit && unit[0] == 'm' && unit[1] == '\0';
+    float good = is_m ? 4.9f : 16.0f;
+    float fair = is_m ? 12.2f : 40.0f;
+    const char *q = value <= good ? "Good" : (value <= fair ? "Fair" : "Poor");
     lv_label_set_text(h->acc_quality, q);
     lv_obj_set_style_text_color(h->acc_quality,
-                                feet <= 16.0f ? UI_C_MUTED : UI_C_RED, 0);
+                                value <= good ? UI_C_MUTED : UI_C_RED, 0);
 }
 
-void ui_home_set_speed(ui_home_t *h, float mph)
+void ui_home_set_speed(ui_home_t *h, float speed, const char *unit)
 {
-    if (h) lv_label_set_text_fmt(h->speed, "%d", (int)(mph + 0.5f));
+    if (!h) return;
+    lv_label_set_text_fmt(h->speed, "%d", (int)(speed + 0.5f));
+    if (unit) lv_label_set_text(h->speed_unit, unit);
 }
 
 void ui_home_set_heading(ui_home_t *h, int deg, const char *cardinal)
@@ -253,11 +376,11 @@ void ui_home_set_heading(ui_home_t *h, int deg, const char *cardinal)
     if (h) ui_compass_set_heading(h->heading_val, h->heading_sub, deg, cardinal);
 }
 
-void ui_home_set_altitude(ui_home_t *h, int feet)
+void ui_home_set_altitude(ui_home_t *h, int altitude, const char *unit)
 {
     if (!h) return;
-    lv_label_set_text_fmt(h->altitude, "%d", feet);
-    lv_label_set_text_fmt(h->pos_alt, "%d ft", feet);
+    lv_label_set_text_fmt(h->altitude, "%d", altitude);
+    if (unit) lv_label_set_text(h->altitude_unit, unit);
 }
 
 void ui_home_set_satellites(ui_home_t *h, int count, const char *quality)
@@ -265,11 +388,6 @@ void ui_home_set_satellites(ui_home_t *h, int count, const char *quality)
     if (!h) return;
     lv_label_set_text_fmt(h->sat_count, "%d", count);
     if (quality) lv_label_set_text(h->sat_quality, quality);
-    for (int i = 0; i < 4; i++) {
-        bool lit = count >= (i + 1) * 4;
-        lv_obj_set_style_bg_color(h->sat_bars[i],
-                                  lit ? UI_C_GREEN : UI_C_GREEN_DIM, 0);
-    }
 }
 
 void ui_home_set_local_time(ui_home_t *h, const char *hms, const char *ampm,
@@ -289,15 +407,23 @@ void ui_home_set_local_time(ui_home_t *h, const char *hms, const char *ampm,
     }
 }
 
-void ui_home_set_trip(ui_home_t *h, float distance_mi, const char *moving,
-                      float avg_mph, float max_mph, int gain_ft)
+void ui_home_set_trip(ui_home_t *h, float distance, const char *moving,
+                      float avg, float max, int gain,
+                      const char *dist_unit, const char *speed_unit,
+                      const char *elev_unit)
 {
     if (!h) return;
-    lv_label_set_text_fmt(h->trip_distance, "%.2f", distance_mi);
+    lv_label_set_text_fmt(h->trip_distance, "%.2f", distance);
+    if (dist_unit) lv_label_set_text(h->trip_distance_unit, dist_unit);
     if (moving) lv_label_set_text(h->trip_moving, moving);
-    lv_label_set_text_fmt(h->trip_avg, "%.1f", avg_mph);
-    lv_label_set_text_fmt(h->trip_max, "%.1f", max_mph);
-    lv_label_set_text_fmt(h->trip_gain, "%d", gain_ft);
+    lv_label_set_text_fmt(h->trip_avg, "%.1f", avg);
+    lv_label_set_text_fmt(h->trip_max, "%.1f", max);
+    if (speed_unit) {
+        lv_label_set_text(h->trip_avg_unit, speed_unit);
+        lv_label_set_text(h->trip_max_unit, speed_unit);
+    }
+    lv_label_set_text_fmt(h->trip_gain, "%d", gain);
+    if (elev_unit) lv_label_set_text(h->trip_gain_unit, elev_unit);
 }
 
 void ui_home_set_tracking(ui_home_t *h, bool on)
@@ -306,4 +432,9 @@ void ui_home_set_tracking(ui_home_t *h, bool on)
     h->tracking = on;
     lv_label_set_text(h->track_btn_label, on ? "Stop Tracking" : "Start Tracking");
     lv_obj_set_style_bg_color(h->track_btn, on ? UI_C_GREEN_DIM : UI_C_BLUE_BTN, 0);
+}
+
+void ui_home_set_reset_trip_cb(ui_home_t *h, void (*cb)(void))
+{
+    if (h) h->reset_trip_cb = cb;
 }

@@ -3,9 +3,27 @@
 //
 // Wire protocol, PC -> ESP32:
 //   SNAP GET\n
+//   TAB <HOME|MAP|NAV|TELEMETRY|MORE>\n
 // ESP32 -> PC:
 //   SNAP FAIL <reason>\n                       (map screen up, lock busy, etc.)
 //   SNAP OK <width> <height> <bytes> <crc32_hex>\n
+//   TAB FAIL <reason>\n                        (unknown name, lock busy, can't leave Map remotely)
+//   TAB OK\n
+//
+// TAB drives the same ui_show_tab() a real navbar tap does, so a capture
+// can be scripted end-to-end (switch screen, then SNAP GET) with no one
+// needed at the device. One exception: leaving the Map screen. Getting
+// *onto* Map goes through ui_show_tab() same as any other tab, but leaving
+// it needs ui_shell_return_to_tab() instead (LVGL is stopped while Map's
+// native renderer owns the panel), which ui_shell.h documents as only
+// safe to call from the native map task's own thread, right before that
+// task deletes itself -- calling it from this task instead would resume
+// LVGL while map_view.c's task is still running and still touching the
+// panel, the exact "two renderers fighting over the framebuffer" failure
+// mode ui_shell.c's own file header describes hitting once already. Rather
+// than risk that unverified, TAB just fails cleanly when asked to leave a
+// live Map screen -- a real tap on the map's own navbar is still the way
+// off it for now.
 //
 // Both directions are short, single writes -- no bulk data goes over this
 // channel at all. An earlier version streamed the captured frame back over
@@ -44,6 +62,8 @@
 #include "freertos/task.h"
 #include "lvgl.h"
 
+#include "design_ui.h"
+#include "ui_common.h"
 #include "ui_shell.h"
 #include "ui_theme.h"
 
@@ -217,6 +237,36 @@ static bool do_capture(void)
     return true;
 }
 
+// Switches screens the same way a real navbar tap does -- see this file's
+// header comment for the one thing it deliberately won't do (leave a live
+// Map screen).
+static void do_tab(const char *name)
+{
+    ui_tab_t tab;
+    if      (!strcmp(name, "HOME"))      tab = UI_TAB_HOME;
+    else if (!strcmp(name, "MAP"))       tab = UI_TAB_MAP;
+    else if (!strcmp(name, "NAV"))       tab = UI_TAB_NAV;
+    else if (!strcmp(name, "TELEMETRY")) tab = UI_TAB_TELEMETRY;
+    else if (!strcmp(name, "MORE"))      tab = UI_TAB_MORE;
+    else {
+        usj_printf("TAB FAIL unknown tab '%s'\n", name);
+        return;
+    }
+
+    if (ui_shell_map_active() && tab != UI_TAB_MAP) {
+        usj_printf("TAB FAIL can't leave Map remotely yet -- tap its navbar\n");
+        return;
+    }
+
+    if (!lvgl_port_lock(1000)) {
+        usj_printf("TAB FAIL lvgl busy\n");
+        return;
+    }
+    ui_show_tab(tab);
+    lvgl_port_unlock();
+    usj_printf("TAB OK\n");
+}
+
 static void fb_capture_task(void *arg)
 {
     (void)arg;
@@ -242,11 +292,13 @@ static void fb_capture_task(void *arg)
         return;
     }
 
-    ESP_LOGI(TAG, "ready, waiting for SNAP GET");
+    ESP_LOGI(TAG, "ready, waiting for SNAP GET / TAB <name>");
     while (1) {
         read_line();
         if (strcmp(s_line, "SNAP GET") == 0) {
             do_capture();
+        } else if (!strncmp(s_line, "TAB ", 4)) {
+            do_tab(s_line + 4);
         }
         // any other line (including interleaved log output) is ignored
     }

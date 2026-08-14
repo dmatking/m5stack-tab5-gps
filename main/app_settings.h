@@ -35,6 +35,38 @@ bool app_settings_get_time_24h(void);
 // clean shutdown), so there's no "save on exit" moment to rely on instead.
 void app_settings_set_time_24h(bool on);
 
+// Backlight brightness, 5-100 (matches ui_settings.c's slider range).
+// Default 72, matching the original design's own demo value.
+int app_settings_get_brightness(void);
+void app_settings_set_brightness(int percent);
+
+// Whether the idle screen-off timeout (ui_shell.c/map_view.c, both share
+// this) is allowed to fire at all. Default true (screen stays on) --
+// matches ui_settings_create()'s own creation-time switch state.
+bool app_settings_get_keep_screen_on(void);
+void app_settings_set_keep_screen_on(bool on);
+
+// Coordinate display/entry format: 0=DD MM.MMMM, 1=DD.DDDDDD, 2=DD MM SS --
+// matches ui_goto.h's ui_coord_fmt_t numeric values exactly (deliberately
+// not typed as that enum here, to keep this lower-level file independent
+// of UI-layer headers; callers cast). Feeds Home's position card display
+// and seeds Goto's format toggle at boot -- Goto's own toggle stays freely
+// overridable per-entry from there, this only sets where it starts.
+int app_settings_get_coord_format(void);
+void app_settings_set_coord_format(int fmt);
+
+// Distance/speed unit: false = mi/mph (default), true = km/h. Applies to
+// Home's SPEED/TRIP cards and the Nav screen's distance/speed/closure.
+bool app_settings_get_distance_km(void);
+void app_settings_set_distance_km(bool km);
+
+// Elevation unit: false = feet (default), true = meters. Applies to Home's
+// ALTITUDE/GPS ACCURACY/TRIP elevation-gain and Telemetry's VERTICAL SPEED
+// (feet-per-minute becomes meters-per-minute -- same axis, a rate of
+// elevation change, not a second independent unit choice).
+bool app_settings_get_elevation_m(void);
+void app_settings_set_elevation_m(bool meters);
+
 #ifdef __cplusplus
 }
 #endif

@@ -30,6 +30,18 @@ tiles_sd_*.bin
 .vscode/
 .idea/
 
+# Design hand-off zips + their unpacked contents, working GIS data, mockup
+# image blobs, and misc tile scratch data -- large, regenerable/source-
+# controlled-elsewhere working files dropped in the tree during design/tile
+# work, never meant to be committed (see the untracked-files sweep this was
+# added from).
+/M4Stack GPS Handheld*.zip
+/gisdata/
+/lvgl_design_extract/
+/lvgl_design_extract2/
+/mockups_rgb565/
+/tiles/
+
 # Reference photos/screenshots dropped in the working tree (e.g. hardware
 # pinout photos taken during debugging) -- not project assets, not meant
 # to be committed. Intentional image assets go under assets/ instead.

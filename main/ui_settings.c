@@ -92,13 +92,13 @@ ui_settings_t *ui_settings_create(lv_event_cb_t tab_cb)
     ui_flex_col(body, 10);
 
     /* display -------------------------------------------------------------- */
+    // No ui_mark_placeholder() -- both rows are real (gps_ui_bridge.c/
+    // design_ui.c wire brightness and keep-screen-on to the real backlight
+    // and idle timeout). Used to also have a "Night mode" row -- removed
+    // rather than left decorative: there's no night-mode visual treatment
+    // (dimming/tint) built anywhere in the app for it to control, so it had
+    // nothing real to become without designing that from scratch first.
     lv_obj_t *g1 = group(body, "DISPLAY");
-    // Every row in every group on this screen is decorative except the
-    // "24-hour time" switch in g2 below -- see project notes. Groups (not
-    // individual rows) are the actual ui_card()s here, so g2's one real
-    // row gets caught up in its group's tint too; noted rather than
-    // engineered around, this is a QA aid, not a precision instrument.
-    ui_mark_placeholder(g1);
 
     lv_obj_t *br = row_base(g1, "Brightness");
     lv_obj_t *brr = ui_box(br);
@@ -117,14 +117,14 @@ ui_settings_t *ui_settings_create(lv_event_cb_t tab_cb)
     s->brightness_pct = ui_label(brr, "72%", ui_font.s, UI_C_MUTED);
 
     ui_divider(g1);
-    row_value(g1, "Night mode", "Auto", UI_C_BLUE, UI_SET_NIGHT_MODE,
-              &s->value[UI_SET_NIGHT_MODE]);
-    ui_divider(g1);
     s->sw_screen_on = row_switch(g1, "Keep screen on", true);
 
     /* units ---------------------------------------------------------------- */
+    // No ui_mark_placeholder() -- the last group on this screen to go real.
+    // Distance/speed and Elevation are persisted 2-way cycles (see
+    // design_ui.c's settings_row_cb()/app_settings.h); Coordinate format
+    // and 24-hour time were already real.
     lv_obj_t *g2 = group(body, "UNITS & FORMAT");
-    ui_mark_placeholder(g2); // see g1's comment above -- catches the real 24h-time row too
     row_value(g2, "Distance / speed", "mi / mph", UI_C_BLUE, UI_SET_UNITS,
               &s->value[UI_SET_UNITS]);
     ui_divider(g2);
@@ -145,33 +145,42 @@ ui_settings_t *ui_settings_create(lv_event_cb_t tab_cb)
     s->sw_time_24h = row_switch(g2, "24-hour time", false);
 
     /* gnss ----------------------------------------------------------------- */
+    // No ui_mark_placeholder() -- both remaining rows are real (read-only)
+    // displays, gps_ui_bridge.c wires them from measured/parsed GPS data.
+    // Used to also have an "SBAS / WAAS" toggle -- removed rather than left
+    // decorative: it had zero real backing (no way to read real SBAS status
+    // from this module's NMEA output, and no write access to the module to
+    // change it -- see gps.c's file header on the unused TX line), unlike
+    // Constellations/Update rate which are at least real information even
+    // without write access.
     lv_obj_t *g3 = group(body, "GNSS");
-    ui_mark_placeholder(g3);
     row_value(g3, "Constellations", "GPS + GLO + GAL", UI_C_MUTED,
               UI_SET_CONSTELLATIONS, &s->value[UI_SET_CONSTELLATIONS]);
     ui_divider(g3);
     row_value(g3, "Update rate", "5 Hz", UI_C_MUTED, UI_SET_UPDATE_RATE,
               &s->value[UI_SET_UPDATE_RATE]);
-    ui_divider(g3);
-    s->sw_sbas = row_switch(g3, "SBAS / WAAS", true);
 
     /* logging -------------------------------------------------------------- */
+    // No ui_mark_placeholder() -- both rows are real (gps_ui_bridge.c wires
+    // gps_log_active() and sd_card_get_usage() into them), the one group on
+    // this screen that's fully wired.
     lv_obj_t *g4 = group(body, "LOGGING & STORAGE");
-    ui_mark_placeholder(g4);
-    // "|" not "\xC2\xB7" (·) below -- see ui_home.c's ± comment; same
-    // missing-glyph issue, different character, same fix.
-    row_value(g4, "Track log", "Recording | 5 s", UI_C_GREEN,
+    row_value(g4, "Track log", "Recording", UI_C_GREEN,
               UI_SET_TRACK_LOG, &s->value[UI_SET_TRACK_LOG]);
     ui_divider(g4);
     lv_obj_t *sd = row_base(g4, "SD card");
-    s->sd_usage = ui_label(sd, "6.2 / 32 GB", ui_font.s, UI_C_MUTED);
+    s->sd_usage = ui_label(sd, "-- / -- GB", ui_font.s, UI_C_MUTED);
 
     lv_obj_t *spacer = ui_box(body);
     lv_obj_set_width(spacer, LV_PCT(100));
     lv_obj_set_flex_grow(spacer, 1);
 
+    // "AT6668", not the original design's "u-blox M10" -- gps.c's own file
+    // header names the real chipset (M5Stack GPS Module v2.1); the demo
+    // text named the wrong vendor entirely. Real uptime replaces the fixed
+    // "21:44" on gps_ui_bridge.c's first tick.
     s->footer = ui_label(body,
-        "Tab5 | FW 1.4.2 | SN 0A31-7742\nu-blox M10 | uptime 21:44",
+        "Tab5 | FW 1.4.2 | SN 0A31-7742\nAT6668 | uptime 0:00:00",
         ui_font.xs, UI_C_DIM);
 
     ui_navbar_create(scr, UI_TAB_MORE, tab_cb);
@@ -202,13 +211,6 @@ void ui_settings_set_screen_on(ui_settings_t *s, bool on)
     else    lv_obj_remove_state(s->sw_screen_on, LV_STATE_CHECKED);
 }
 
-void ui_settings_set_sbas(ui_settings_t *s, bool on)
-{
-    if (!s) return;
-    if (on) lv_obj_add_state(s->sw_sbas, LV_STATE_CHECKED);
-    else    lv_obj_remove_state(s->sw_sbas, LV_STATE_CHECKED);
-}
-
 void ui_settings_set_time_24h(ui_settings_t *s, bool on)
 {
     if (!s) return;
@@ -219,6 +221,14 @@ void ui_settings_set_time_24h(ui_settings_t *s, bool on)
 void ui_settings_set_storage(ui_settings_t *s, float used_gb, float total_gb)
 {
     if (s) lv_label_set_text_fmt(s->sd_usage, "%.1f / %.0f GB", used_gb, total_gb);
+}
+
+void ui_settings_set_track_log(ui_settings_t *s, bool recording)
+{
+    if (!s) return;
+    lv_obj_t *v = s->value[UI_SET_TRACK_LOG];
+    lv_label_set_text_fmt(v, "%s " LV_SYMBOL_RIGHT, recording ? "Recording" : "Not recording");
+    lv_obj_set_style_text_color(v, recording ? UI_C_GREEN : UI_C_MUTED, 0);
 }
 
 void ui_settings_set_footer(ui_settings_t *s, const char *line1, const char *line2)
@@ -249,4 +259,10 @@ void ui_settings_set_time_24h_cb(ui_settings_t *s, lv_event_cb_t cb)
 {
     if (s && cb)
         lv_obj_add_event_cb(s->sw_time_24h, cb, LV_EVENT_VALUE_CHANGED, NULL);
+}
+
+void ui_settings_set_screen_on_cb(ui_settings_t *s, lv_event_cb_t cb)
+{
+    if (s && cb)
+        lv_obj_add_event_cb(s->sw_screen_on, cb, LV_EVENT_VALUE_CHANGED, NULL);
 }

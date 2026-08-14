@@ -26,9 +26,16 @@
 # Map screen NOT supported -- see main/fb_capture.h for why; step 1 gets
 # "SNAP FAIL map screen not supported yet" if you try.
 #
+# --tab switches screens first (via "TAB <name>", the same ui_show_tab() a
+# real navbar tap drives) so a whole sweep can run unattended instead of
+# needing someone to tap the device between captures. Switching *to* Map
+# works; switching *away* from a live Map screen doesn't (see
+# main/fb_capture.h for why) -- gets "TAB FAIL" if you try.
+#
 # Usage:
 #   python tools/pull_snapshot.py --port COM17
 #   python tools/pull_snapshot.py --port COM17 --out screen.png
+#   python tools/pull_snapshot.py --port COM17 --tab TELEMETRY --out telemetry.png
 
 import argparse
 import subprocess
@@ -95,16 +102,36 @@ def wait_for(ser, prefixes, timeout):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--port", default="COM17")
-    ap.add_argument("--baud", type=int, default=115200, help="baud for the SNAP GET command (default 115200)")
+    ap.add_argument("--baud", type=int, default=115200, help="baud for the SNAP GET/TAB commands (default 115200)")
     ap.add_argument("--flash-baud", type=int, default=460800, help="baud for the esptool flash read (default 460800)")
     ap.add_argument("--out", default=None, help="output PNG path (default: capture_<timestamp>.png)")
-    ap.add_argument("--timeout", type=float, default=15, help="seconds to wait for the SNAP response (default 15)")
+    ap.add_argument("--timeout", type=float, default=15, help="seconds to wait for a response (default 15)")
+    ap.add_argument("--tab", default=None, choices=["HOME", "MAP", "NAV", "TELEMETRY", "MORE"],
+                     help="switch to this tab before capturing (default: capture whatever's already showing)")
+    ap.add_argument("--settle", type=float, default=0.3,
+                     help="seconds to wait after switching tabs before capturing (default 0.3)")
     args = ap.parse_args()
 
     out_path = args.out or time.strftime("capture_%Y%m%d_%H%M%S.png")
 
-    print("Requesting capture...", flush=True)
     ser = open_no_reset(args.port, args.baud)
+
+    if args.tab:
+        print(f"Switching to {args.tab}...", flush=True)
+        ser.write(f"TAB {args.tab}\n".encode())
+        tab_result = wait_for(ser, ("TAB OK", "TAB FAIL"), timeout=args.timeout)
+        if tab_result is None:
+            print("ERROR: no response to TAB -- is the device running fb_capture-enabled "
+                  "firmware and connected on the right port?", file=sys.stderr, flush=True)
+            ser.close()
+            sys.exit(1)
+        if tab_result.startswith("TAB FAIL"):
+            print(f"FAILED: {tab_result}", file=sys.stderr, flush=True)
+            ser.close()
+            sys.exit(1)
+        time.sleep(args.settle)
+
+    print("Requesting capture...", flush=True)
     ser.write(b"SNAP GET\n")
     result = wait_for(ser, ("SNAP OK", "SNAP FAIL"), timeout=args.timeout)
     ser.close()

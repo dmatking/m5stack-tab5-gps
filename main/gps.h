@@ -19,6 +19,40 @@
 extern "C" {
 #endif
 
+// System IDs match this module's own $GxGSA trailing field (confirmed on
+// real hardware, see gps.c's handle_gsa()): 1=GPS, 2=GLONASS, 3=Galileo,
+// 4=BeiDou, 5=QZSS. GPS_CONST_UNKNOWN covers any talker/system ID this
+// module hasn't been seen to emit.
+typedef enum {
+    GPS_CONST_GPS = 0,
+    GPS_CONST_GLONASS,
+    GPS_CONST_GALILEO,
+    GPS_CONST_BEIDOU,
+    GPS_CONST_QZSS,
+    GPS_CONST_COUNT,                      // number of real constellations above -- sizes arrays
+    GPS_CONST_UNKNOWN = GPS_CONST_COUNT,  // sentinel for an unrecognized talker/system ID, never a valid array index
+} gps_constellation_t;
+
+// One satellite, from $GxGSV (existence/PRN/elevation/azimuth/SNR) with
+// used_in_solution filled in from the matching $GxGSA (see gps.c's
+// handle_gsa()). Entries persist across ticks until their constellation's
+// next full GSV cycle replaces them (a satellite that drops out of view
+// stops being reported by the module, not flagged some other way).
+typedef struct {
+    uint8_t prn;
+    uint8_t elevation_deg;   // 0-90
+    uint16_t azimuth_deg;    // 0-359
+    uint8_t snr;             // dB-Hz, 0 if not currently tracked (has_snr false)
+    bool has_snr;            // false when the module reports this PRN but isn't decoding it yet
+    bool used_in_solution;
+    gps_constellation_t constellation;
+} gps_satellite_t;
+
+// Generous headroom for a full multi-GNSS view (GPS+GLONASS+Galileo+BeiDou+
+// QZSS all visible at once) -- not a real-world count this module has
+// actually been observed to report, just sized not to truncate one.
+#define GPS_MAX_SATS 48
+
 // Parsed GPS state. Updated by the background reader task; read via gps_get_state().
 typedef struct {
     bool gga_fix;           // GGA sentence reports a fix
@@ -36,7 +70,11 @@ typedef struct {
     float hdop;             // horizontal dilution of precision (lower = better)
     float altitude_m;       // antenna altitude above mean sea level, meters
     int sats_in_use;
+    float fix_rate_hz;      // measured GGA-to-GGA interval, not a config value read from the module -- see handle_gga()
+    bool fix_rate_valid;    // false until a second GGA sentence arrives to measure an interval from
     struct tm utc_tm;       // UTC time/date (populated incrementally from GGA + RMC)
+    gps_satellite_t satellites[GPS_MAX_SATS];
+    int satellite_count;
 } gps_state_t;
 
 // Initialize UART1 (Tab5 M5-Bus RXD0/TXD0, GPIO38/37) and start the

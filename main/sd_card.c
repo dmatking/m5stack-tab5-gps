@@ -101,3 +101,19 @@ bool sd_card_is_mounted(void)
 {
     return s_mounted;
 }
+
+bool sd_card_get_usage(float *used_gb, float *total_gb)
+{
+    if (!s_mounted) return false;
+
+    uint64_t total_bytes = 0, free_bytes = 0;
+    esp_err_t err = esp_vfs_fat_info(SD_MOUNT_POINT, &total_bytes, &free_bytes);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "esp_vfs_fat_info failed: %s", esp_err_to_name(err));
+        return false;
+    }
+
+    if (used_gb)  *used_gb  = (float)((double)(total_bytes - free_bytes) / 1e9);
+    if (total_gb) *total_gb = (float)((double)total_bytes / 1e9);
+    return true;
+}
