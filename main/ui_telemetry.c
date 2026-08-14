@@ -12,6 +12,12 @@ static lv_obj_t *cell(lv_obj_t *parent, int grow, const char *caption,
     lv_obj_set_style_pad_hor(c, 20, 0);
     lv_obj_set_style_pad_ver(c, 14, 0);
     ui_flex_col(c, 2);
+    // Every card on this screen defaulted to flex's own start/start (top-
+    // left) alignment -- unlike Home's equivalent cards, which all
+    // explicitly center -- and read as a layout mistake once actually
+    // looked at side by side rather than one card at a time.
+    lv_obj_set_flex_align(c, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
     ui_caption(c, caption);
     *out_value = ui_label(c, value, font, color);
     return c;
@@ -63,6 +69,8 @@ ui_telemetry_t *ui_telemetry_create(lv_event_cb_t tab_cb)
     // comment; same missing-glyph issue (LVGL's built-in Montserrat fonts
     // only include ASCII + the degree sign), different character, same
     // ASCII-substitute fix.
+    lv_obj_set_flex_align(pos, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
     ui_caption(pos, "POSITION | WGS84");
     t->pos_line1 = ui_label(pos, "32\xC2\xB0 54.1234' N", ui_font.semi_l, UI_C_TEXT);
     t->pos_line2 = ui_label(pos, "097\xC2\xB0 19.5678' W", ui_font.semi_l, UI_C_TEXT);
@@ -95,6 +103,8 @@ ui_telemetry_t *ui_telemetry_create(lv_event_cb_t tab_cb)
     lv_obj_set_style_pad_hor(local_card, 20, 0);
     lv_obj_set_style_pad_ver(local_card, 14, 0);
     ui_flex_col(local_card, 2);
+    lv_obj_set_flex_align(local_card, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
     t->local_caption = ui_caption(local_card, "LOCAL | CDT");
     t->local_time = ui_label(local_card, "10:24:18", ui_font.num_m, UI_C_TEXT);
     cell(r4, 1, "UTC", "15:24:18", ui_font.num_m, UI_C_MUTED, &t->utc_time);
@@ -123,8 +133,8 @@ ui_telemetry_t *ui_telemetry_create(lv_event_cb_t tab_cb)
     // hardware). A column has nothing to overlap regardless of how long
     // either line gets.
     ui_flex_col(shead, 4);
-    lv_obj_set_flex_align(shead, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START,
-                          LV_FLEX_ALIGN_START);
+    lv_obj_set_flex_align(shead, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
     // "-" not "\xE2\x80\x94" (em dash) -- same missing-glyph issue as the ·
     // fix above, just a different character (also outside LVGL's built-in
     // font's ASCII+degree-sign-only coverage).
@@ -132,6 +142,11 @@ ui_telemetry_t *ui_telemetry_create(lv_event_cb_t tab_cb)
     t->constellations  = ui_label(shead, "GPS | GLONASS | GALILEO",
                                   ui_font.xs, UI_C_MUTED);
     lv_obj_set_width(t->constellations, LV_PCT(100));
+    // The label itself still spans the full card width (needed for
+    // wrapping) even though shead now centers it as a block -- centering
+    // the *text within* that width needs its own text-align, same
+    // reasoning as trip_cell()'s two-line captions on Home.
+    lv_obj_set_style_text_align(t->constellations, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(t->constellations, LV_LABEL_LONG_WRAP);
     // Recolor mode: gps_ui_bridge.c sends this label's text with inline
     // "#RRGGBB text#" spans, one color per constellation matching that
