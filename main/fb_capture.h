@@ -3,9 +3,12 @@
 
 #pragma once
 
-// On-demand screen capture for debugging -- lets tools/pull_snapshot.py
-// grab whatever's currently on an LVGL-driven screen (Home/Telemetry/Goto/
-// Settings) as a PNG on the PC, instead of photographing the panel.
+// On-demand screen capture *and* remote tab switching for debugging -- lets
+// tools/pull_snapshot.py grab whatever's currently on an LVGL-driven screen
+// (Home/Telemetry/Goto/Settings) as a PNG on the PC, and lets a "TAB <name>"
+// command switch screens without anyone tapping the device, so a whole
+// screenshot sweep can be scripted end-to-end. Both instead of photographing
+// the panel / having someone drive it by hand.
 //
 // A short "SNAP GET" command over the same USB-Serial-JTAG connection
 // already used for flashing/monitoring triggers a capture (reusing
@@ -16,12 +19,13 @@
 // partition with `esptool read_flash` (the same proven bootloader-mode path
 // already used for flashing) and converts it to a PNG.
 //
-// Map screen NOT supported yet -- it's native-rendered straight to the DSI
-// hardware framebuffers with LVGL stopped (see ui_shell.c's
-// ui_shell_enter_map()), so there's no LVGL scene tree to snapshot there.
-// Requests made while the Map screen is up get a "SNAP FAIL" response
-// instead of silently capturing stale content from whatever screen was
-// loaded before the handoff.
+// Map screen: switching *to* it works ("TAB MAP" goes through the same
+// ui_show_tab() a real tap does). Switching *away* from it remotely doesn't
+// -- see fb_capture.c's file header for why -- and capturing it never has:
+// it's native-rendered straight to the DSI hardware framebuffers with LVGL
+// stopped (see ui_shell.c's ui_shell_enter_map()), so there's no LVGL scene
+// tree to snapshot there. Requests made while the Map screen is up get a
+// "SNAP FAIL"/"TAB FAIL" response instead of silently doing the wrong thing.
 //
 // Spawns its own low-priority task and returns immediately. Call once from
 // app_main(), after ui_shell_start() -- normal-mode build only, not the
