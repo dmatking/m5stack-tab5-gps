@@ -210,6 +210,44 @@ lv_obj_t *ui_clock_icon(lv_obj_t *parent, lv_coord_t size, lv_color_t color)
     return wrap;
 }
 
+lv_obj_t *ui_satellite_icon(lv_obj_t *parent, lv_coord_t size, lv_color_t color)
+{
+    lv_obj_t *wrap = ui_box(parent);
+    lv_obj_set_size(wrap, size, size);
+
+    /* Filled square body, centered. */
+    lv_coord_t body = LV_MAX(size * 3 / 10, 4);
+    lv_obj_t *sat_body = ui_box(wrap);
+    lv_obj_set_size(sat_body, body, body);
+    lv_obj_center(sat_body);
+    lv_obj_set_style_radius(sat_body, LV_MAX(body / 5, 1), 0);
+    lv_obj_set_style_bg_color(sat_body, color, 0);
+    lv_obj_set_style_bg_opa(sat_body, LV_OPA_COVER, 0);
+
+    /* Outlined "solar panel" wings, one on each side of the body. */
+    lv_coord_t wing_w = LV_MAX(size * 3 / 10, 4);
+    lv_coord_t wing_h = LV_MAX(size * 9 / 20, 4);
+    lv_coord_t gap = LV_MAX(size / 12, 1);
+    lv_coord_t border = LV_MAX(size / 16, 1);
+    lv_coord_t offset = body / 2 + gap + wing_w / 2;
+
+    lv_obj_t *wing_l = ui_box(wrap);
+    lv_obj_set_size(wing_l, wing_w, wing_h);
+    lv_obj_set_style_radius(wing_l, 1, 0);
+    lv_obj_set_style_border_color(wing_l, color, 0);
+    lv_obj_set_style_border_width(wing_l, border, 0);
+    lv_obj_align(wing_l, LV_ALIGN_CENTER, -offset, 0);
+
+    lv_obj_t *wing_r = ui_box(wrap);
+    lv_obj_set_size(wing_r, wing_w, wing_h);
+    lv_obj_set_style_radius(wing_r, 1, 0);
+    lv_obj_set_style_border_color(wing_r, color, 0);
+    lv_obj_set_style_border_width(wing_r, border, 0);
+    lv_obj_align(wing_r, LV_ALIGN_CENTER, offset, 0);
+
+    return wrap;
+}
+
 void ui_mark_placeholder(lv_obj_t *card)
 {
 #if UI_DEBUG_MARK_PLACEHOLDERS

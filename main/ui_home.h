@@ -24,7 +24,6 @@ typedef struct {
 
     lv_obj_t *sat_count;
     lv_obj_t *sat_quality;
-    lv_obj_t *sat_bars[4];
     lv_obj_t *acc_val;
     lv_obj_t *acc_quality;
     lv_obj_t *time_caption;   /* "TIME (CDT)"/"TIME (CST)" -- see ui_home_set_local_time() */

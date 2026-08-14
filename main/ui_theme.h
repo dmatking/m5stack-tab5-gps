@@ -134,6 +134,15 @@ void ui_compass_set_heading(lv_obj_t *value_label, lv_obj_t *sub_label,
  * ui_compass() itself does. `size` is the icon's square footprint. */
 lv_obj_t *ui_clock_icon(lv_obj_t *parent, lv_coord_t size, lv_color_t color);
 
+/* Small satellite icon (body + two solar-panel wings) -- same reasoning as
+ * ui_clock_icon() above: no stock LV_SYMBOL glyph for this either. Replaced
+ * Home's SATELLITES card's 4-bar signal meter (main/ui_home.c), which was
+ * tall enough to push that card's count noticeably lower than GPS ACCURACY/
+ * TIME's icons in the same row -- confirmed on real hardware via a
+ * photographed-alignment comparison. `size` is the icon's square footprint,
+ * same convention as ui_clock_icon(). */
+lv_obj_t *ui_satellite_icon(lv_obj_t *parent, lv_coord_t size, lv_color_t color);
+
 /* QA aid -- see UI_DEBUG_MARK_PLACEHOLDERS above. No-op (and card is
  * otherwise untouched) when that flag is 0. */
 void ui_mark_placeholder(lv_obj_t *card);

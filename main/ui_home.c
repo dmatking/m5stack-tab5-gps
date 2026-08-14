@@ -2,11 +2,15 @@
 
 static ui_home_t s_home;
 
-/* A metric card: caption on top, big value, unit under it. */
+/* A metric card: caption on top, big value, unit under it. top_pad is extra
+ * space inserted between caption and value -- SPEED/ALTITUDE pass the
+ * offset that lines their value up with HEADING's compass dial (ui_compass()
+ * centers its own number well below the caption, inside the dial), without
+ * moving the caption itself. 0 for a plain top-anchored card. */
 static lv_obj_t *metric_card(lv_obj_t *parent, int grow, const char *caption,
                              const char *value, const lv_font_t *value_font,
                              const char *unit, lv_color_t value_color,
-                             lv_obj_t **out_value)
+                             lv_coord_t top_pad, lv_obj_t **out_value)
 {
     lv_obj_t *c = ui_card(parent);
     lv_obj_set_height(c, LV_PCT(100));
@@ -16,15 +20,26 @@ static lv_obj_t *metric_card(lv_obj_t *parent, int grow, const char *caption,
                           LV_FLEX_ALIGN_CENTER);
 
     ui_caption(c, caption);
+    if (top_pad > 0) {
+        lv_obj_t *spacer = ui_box(c);
+        lv_obj_set_size(spacer, 1, top_pad);
+    }
     lv_obj_t *v = ui_label(c, value, value_font, value_color);
     if (out_value) *out_value = v;
     if (unit) ui_label(c, unit, ui_font.s, UI_C_MUTED);
     return c;
 }
 
-/* One column of the trip strip. */
+/* One column of the trip strip. one_line_caption is true for DISTANCE/
+ * MOVING -- their captions are one line while AVG/MAX SPEED and ELEV GAIN's
+ * are two ("SPEED\nAVG" etc.), and without this their values sit visibly
+ * higher, out of line with the other three (confirmed via a photographed-
+ * alignment comparison). Adds a same-size-as-a-caption-line spacer instead
+ * of touching the caption itself, so the titles stay put and only the
+ * value/unit move down to match. */
 static void trip_cell(lv_obj_t *parent, const char *caption, const char *value,
-                      const char *unit, bool left_rule, lv_obj_t **out_value)
+                      const char *unit, bool left_rule, bool one_line_caption,
+                      lv_obj_t **out_value)
 {
     lv_obj_t *cell = ui_box(parent);
     lv_obj_set_height(cell, LV_SIZE_CONTENT);
@@ -45,6 +60,10 @@ static void trip_cell(lv_obj_t *parent, const char *caption, const char *value,
     // sake of not special-casing this per call -- harmless there since a
     // single line has nothing to center against.
     lv_obj_set_style_text_align(cap, LV_TEXT_ALIGN_CENTER, 0);
+    if (one_line_caption) {
+        lv_obj_t *spacer = ui_box(cell);
+        lv_obj_set_size(spacer, 1, 22); // ~one ui_font.xs line, matched against a real capture
+    }
     *out_value = ui_label(cell, value, ui_font.semi_m, UI_C_TEXT);
     ui_label(cell, unit, ui_font.xs, UI_C_MUTED);
 }
@@ -187,8 +206,13 @@ ui_home_t *ui_home_create(lv_event_cb_t tab_cb)
     lv_obj_set_height(row1, 262);
     ui_flex_row(row1, 12);
 
+    // 49px top_pad on SPEED/ALTITUDE: HEADING's ui_compass() centers its
+    // "000" well below the caption, inside the 180px dial -- without this,
+    // SPEED/ALTITUDE's numbers sit noticeably higher than HEADING's,
+    // confirmed via a photographed-alignment comparison. Not derived from
+    // exact font metrics, just measured/adjusted against a real capture.
     metric_card(row1, 10, "SPEED", "42", ui_font.num_l, "mph", UI_C_TEXT,
-                &h->speed);
+                49, &h->speed);
 
     lv_obj_t *hcard = ui_card(row1);
     lv_obj_set_height(hcard, LV_PCT(100));
@@ -200,7 +224,7 @@ ui_home_t *ui_home_create(lv_event_cb_t tab_cb)
     ui_compass(hcard, 180, &h->heading_val, &h->heading_sub);
 
     metric_card(row1, 10, "ALTITUDE", "1,248", ui_font.num_l, "ft", UI_C_TEXT,
-                &h->altitude);
+                49, &h->altitude);
 
     /* satellites / accuracy / time --------------------------------------- */
     lv_obj_t *row2 = ui_box(body);
@@ -215,19 +239,13 @@ ui_home_t *ui_home_create(lv_event_cb_t tab_cb)
     lv_obj_set_flex_align(sat, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
     ui_caption(sat, "SATELLITES");
-    lv_obj_t *bars = ui_box(sat);
-    lv_obj_set_size(bars, LV_SIZE_CONTENT, 52);
-    ui_flex_row(bars, 6);
-    lv_obj_set_flex_align(bars, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END,
-                          LV_FLEX_ALIGN_END);
-    const int bar_pct[4] = { 36, 58, 78, 100 };
-    for (int i = 0; i < 4; i++) {
-        h->sat_bars[i] = ui_box(bars);
-        lv_obj_set_size(h->sat_bars[i], 13, LV_PCT(bar_pct[i]));
-        lv_obj_set_style_radius(h->sat_bars[i], 2, 0);
-        lv_obj_set_style_bg_color(h->sat_bars[i], UI_C_GREEN, 0);
-        lv_obj_set_style_bg_opa(h->sat_bars[i], LV_OPA_COVER, 0);
-    }
+    // Was a 4-bar phone-signal-style meter -- at 52px tall, noticeably
+    // taller than GPS ACCURACY's LV_SYMBOL_GPS glyph and TIME's 32px clock
+    // icon in the same row, which pushed this card's count down out of line
+    // with theirs (confirmed via a photographed-alignment comparison). A
+    // satellite icon at the same 32px size as the clock icon fixes the
+    // alignment and reads more literally as "satellites" anyway.
+    ui_satellite_icon(sat, 32, UI_C_GREEN);
     h->sat_count   = ui_label(sat, "14", ui_font.num_m, UI_C_TEXT);
     h->sat_quality = ui_label(sat, "Good", ui_font.s, UI_C_MUTED);
 
@@ -284,15 +302,15 @@ ui_home_t *ui_home_create(lv_event_cb_t tab_cb)
     lv_obj_t *cells = ui_box(trip);
     lv_obj_set_size(cells, LV_PCT(100), LV_SIZE_CONTENT);
     ui_flex_row(cells, 0);
-    trip_cell(cells, "DISTANCE",    "12.48",   "mi",    false, &h->trip_distance);
-    trip_cell(cells, "MOVING",      "0:28:47", "h:m:s", true,  &h->trip_moving);
+    trip_cell(cells, "DISTANCE",    "12.48",   "mi",    false, true,  &h->trip_distance);
+    trip_cell(cells, "MOVING",      "0:28:47", "h:m:s", true,  true,  &h->trip_moving);
     // Two lines each (was one, cramped) -- same words, just wrapped, not
     // abbreviated. SPEED first (not AVG/MAX first) so the shared word lines
     // up between these two adjacent cells, with the distinguishing word
     // underneath.
-    trip_cell(cells, "SPEED\nAVG",  "25.9",    "mph",   true,  &h->trip_avg);
-    trip_cell(cells, "SPEED\nMAX",  "68.3",    "mph",   true,  &h->trip_max);
-    trip_cell(cells, "ELEV\nGAIN",  "512",     "ft",    true,  &h->trip_gain);
+    trip_cell(cells, "SPEED\nAVG",  "25.9",    "mph",   true,  false, &h->trip_avg);
+    trip_cell(cells, "SPEED\nMAX",  "68.3",    "mph",   true,  false, &h->trip_max);
+    trip_cell(cells, "ELEV\nGAIN",  "512",     "ft",    true,  false, &h->trip_gain);
 
     /* Below the card, not inside it -- same footprint as Start Tracking
      * below, just a secondary/destructive action (outline + red, matching
@@ -355,11 +373,6 @@ void ui_home_set_satellites(ui_home_t *h, int count, const char *quality)
     if (!h) return;
     lv_label_set_text_fmt(h->sat_count, "%d", count);
     if (quality) lv_label_set_text(h->sat_quality, quality);
-    for (int i = 0; i < 4; i++) {
-        bool lit = count >= (i + 1) * 4;
-        lv_obj_set_style_bg_color(h->sat_bars[i],
-                                  lit ? UI_C_GREEN : UI_C_GREEN_DIM, 0);
-    }
 }
 
 void ui_home_set_local_time(ui_home_t *h, const char *hms, const char *ampm,
