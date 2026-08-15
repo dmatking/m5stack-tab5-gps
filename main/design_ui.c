@@ -104,13 +104,16 @@ static void screen_on_switch_cb(lv_event_t *e)
 // static there) since they're a fixed 3-button row, not a cycling value.
 static const char *coord_fmt_names[3] = { "DD MM.MMMM", "DD.DDDDDD", "DD MM SS" };
 
-// Settings' "value" rows (chevron on the right) all report taps through
-// this one callback, keyed by ui_setting_id_t. Coordinate format,
-// Distance/speed, and Elevation are real (each a 2-3 way cycle, persisted
-// via app_settings.h) -- Night mode/SBAS were removed outright (nothing
-// real to wire, see their own removal commits) and Time zone/
-// Constellations/Update rate are real read-only *displays*
-// (gps_ui_bridge.c), not editable, so a tap on those is silently ignored.
+// Settings' chevron-tipped "value" rows (Coordinate format, Distance/
+// speed, Elevation -- see ui_settings.c's row_value()) all report taps
+// through this one callback, keyed by ui_setting_id_t. Each is a real
+// 2-3 way cycle, persisted via app_settings.h. Time zone/Constellations/
+// Update rate/Track log are real too, but read-only *displays*
+// (gps_ui_bridge.c) -- those use row_display() instead, which has no
+// chevron and isn't clickable in the first place, so they never reach
+// this callback at all (used to route here and get silently ignored,
+// which read as a bug from the chevron alone implying there was
+// something to tap).
 static void settings_row_cb(lv_event_t *e)
 {
     ui_setting_id_t id = (ui_setting_id_t)(lv_uintptr_t)lv_event_get_user_data(e);

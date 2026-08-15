@@ -2,6 +2,11 @@
 
 static ui_settings_t s_set;
 static lv_obj_t *s_rows[UI_SET_COUNT];
+// true only for ids created via row_value() (the 3 actionable rows) --
+// ui_settings_set_value() checks this to decide whether to append the
+// "> " chevron. See row_display()'s own comment for why the other 4 ids
+// never set this.
+static bool s_actionable[UI_SET_COUNT];
 
 /* Grouped list card: rounded container, rows separated by hairlines. */
 static lv_obj_t *group(lv_obj_t *parent, const char *caption)
@@ -20,7 +25,11 @@ static lv_obj_t *row_base(lv_obj_t *parent, const char *title)
     lv_obj_t *r = ui_box(parent);
     lv_obj_set_size(r, LV_PCT(100), LV_SIZE_CONTENT);
     lv_obj_set_style_pad_hor(r, 20, 0);
-    lv_obj_set_style_pad_ver(r, 12, 0);
+    // 18, not the original 12 -- rows read as small tap targets on real
+    // hardware (reported directly by the user), and there was plenty of
+    // vertical room to spare (this screen already ends in a flex_grow
+    // spacer before the footer, see ui_settings_create()'s bottom).
+    lv_obj_set_style_pad_ver(r, 18, 0);
     ui_flex_row(r, 12);
     lv_obj_set_flex_align(r, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
@@ -28,7 +37,8 @@ static lv_obj_t *row_base(lv_obj_t *parent, const char *title)
     return r;
 }
 
-/* Row with a value + chevron on the right. */
+/* Row with a value + chevron on the right, tappable -- for the rows that
+ * actually do something on tap (settings_row_cb() in design_ui.c). */
 static lv_obj_t *row_value(lv_obj_t *parent, const char *title, const char *value,
                            lv_color_t color, ui_setting_id_t id, lv_obj_t **out)
 {
@@ -37,7 +47,27 @@ static lv_obj_t *row_value(lv_obj_t *parent, const char *title, const char *valu
     lv_obj_t *v = ui_label(r, value, ui_font.s, color);
     lv_label_set_text_fmt(v, "%s " LV_SYMBOL_RIGHT, value);
     if (out) *out = v;
-    if (id < UI_SET_COUNT) s_rows[id] = r;
+    if (id < UI_SET_COUNT) {
+        s_rows[id] = r;
+        s_actionable[id] = true;
+    }
+    return r;
+}
+
+/* Row with a value on the right, plain text and not clickable -- for
+ * read-only live info (Time zone/Constellations/Update rate/Track log)
+ * that nothing on this screen lets you change. row_value()'s chevron
+ * used to appear on these too even though a tap did nothing (see
+ * settings_row_cb()'s old comment in design_ui.c) -- confusing, since it
+ * implies there's something to change. Not registered in s_rows[]/
+ * s_actionable[], so ui_settings_set_row_cb() never attaches a handler
+ * and ui_settings_set_value() never appends the chevron for these ids. */
+static lv_obj_t *row_display(lv_obj_t *parent, const char *title, const char *value,
+                             lv_color_t color, lv_obj_t **out)
+{
+    lv_obj_t *r = row_base(parent, title);
+    lv_obj_t *v = ui_label(r, value, ui_font.s, color);
+    if (out) *out = v;
     return r;
 }
 
@@ -58,6 +88,7 @@ ui_settings_t *ui_settings_create(lv_event_cb_t tab_cb)
     ui_settings_t *s = &s_set;
     lv_memzero(s, sizeof(*s));
     lv_memzero(s_rows, sizeof(s_rows));
+    lv_memzero(s_actionable, sizeof(s_actionable));
 
     lv_obj_t *scr = lv_obj_create(NULL);
     lv_obj_remove_style_all(scr);
@@ -73,16 +104,31 @@ ui_settings_t *ui_settings_create(lv_event_cb_t tab_cb)
     lv_obj_set_size(head, LV_PCT(100), 66);
     lv_obj_set_style_pad_hor(head, 22, 0);
     ui_flex_row(head, 12);
-    lv_obj_set_flex_align(head, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
+    lv_obj_set_flex_align(head, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
     ui_label(head, "Settings", ui_font.semi_m, UI_C_TEXT);
-    lv_obj_t *hr = ui_box(head);
-    lv_obj_set_size(hr, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    ui_flex_row(hr, 16);
-    lv_obj_set_flex_align(hr, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_CENTER);
-    s->status.clock = ui_label(hr, "10:24 AM", ui_font.s, UI_C_TEXT);
-    s->status.batt  = ui_label(hr, "87%", ui_font.s, UI_C_GREEN);
+    // A flex_grow spacer pushing clock+batt to the right edge, not a
+    // second nested SIZE_CONTENT flex row (this screen's own original
+    // structure, "hr") -- that doubly-nested arrangement is what every
+    // other screen's status bar avoids (see ui_common.c's ui_status_create(),
+    // row 1: title, grow spacer, clock, batt, all flat). The nested version
+    // rendered the clock as a garbled fragment on real hardware the moment
+    // it started updating every tick instead of staying frozen (confirmed
+    // by the user directly, a fixed width on the label alone didn't fix
+    // it) -- flattening to the same structure every other screen already
+    // uses without issue did.
+    lv_obj_t *head_spacer = ui_box(head);
+    lv_obj_set_flex_grow(head_spacer, 1);
+    // clock: gps_ui_bridge.c pushes the real local time in every tick, same
+    // as every other screen's status bar -- this one just never went
+    // through ui_status_create(), which is what let it get missed and
+    // stay frozen at this creation-time value until the user noticed.
+    // batt: still that creation-time "87%" and staying that way -- there's
+    // no fuel-gauge hardware wired up anywhere in this app yet (same gap
+    // noted in ui_home.c), not something specific to this screen to fix
+    // in isolation.
+    s->status.clock = ui_label(head, "10:24 AM", ui_font.s, UI_C_TEXT);
+    s->status.batt  = ui_label(head, "87%", ui_font.s, UI_C_GREEN);
 
     lv_obj_t *body = ui_box(scr);
     lv_obj_set_width(body, LV_PCT(100));
@@ -107,13 +153,19 @@ ui_settings_t *ui_settings_create(lv_event_cb_t tab_cb)
     lv_obj_set_flex_align(brr, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
     s->brightness = lv_slider_create(brr);
-    lv_obj_set_size(s->brightness, 170, 10);
+    // 280x14, not the original 170x10 -- too short/thin to drag precisely
+    // (reported directly by the user as "wonky"): at 170px across a 5-100
+    // range, each 1% step is under 2px, well under finger-drag precision
+    // on a touchscreen, so small movements were overshooting several
+    // percent at a time. More track length means more pixels per percent;
+    // the bigger knob (9px pad, was 6) gives a bigger grab target too.
+    lv_obj_set_size(s->brightness, 280, 14);
     lv_slider_set_range(s->brightness, 5, 100);
     lv_slider_set_value(s->brightness, 72, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(s->brightness, UI_C_BORDER, LV_PART_MAIN);
     lv_obj_set_style_bg_color(s->brightness, UI_C_GREEN, LV_PART_INDICATOR);
     lv_obj_set_style_bg_color(s->brightness, UI_C_GREEN, LV_PART_KNOB);
-    lv_obj_set_style_pad_all(s->brightness, 6, LV_PART_KNOB);
+    lv_obj_set_style_pad_all(s->brightness, 9, LV_PART_KNOB);
     s->brightness_pct = ui_label(brr, "72%", ui_font.s, UI_C_MUTED);
 
     ui_divider(g1);
@@ -134,8 +186,11 @@ ui_settings_t *ui_settings_create(lv_event_cb_t tab_cb)
     row_value(g2, "Coordinate format", "DD MM.MMMM", UI_C_MUTED,
               UI_SET_COORD_FORMAT, &s->value[UI_SET_COORD_FORMAT]);
     ui_divider(g2);
-    row_value(g2, "Time zone", "CDT (UTC-5)", UI_C_MUTED, UI_SET_TIMEZONE,
-              &s->value[UI_SET_TIMEZONE]);
+    // row_display(), not row_value() -- Central-only by design (see
+    // gps_ui_bridge.c's us_central_from_utc()), not a picker, so no
+    // chevron implying it's tappable.
+    row_display(g2, "Time zone", "CDT (UTC-5)", UI_C_MUTED,
+                &s->value[UI_SET_TIMEZONE]);
     ui_divider(g2);
     // Real (persisted, see app_settings.h), unlike the rest of this group --
     // added on its own ahead of wiring the others, per the user's own
@@ -153,20 +208,24 @@ ui_settings_t *ui_settings_create(lv_event_cb_t tab_cb)
     // change it -- see gps.c's file header on the unused TX line), unlike
     // Constellations/Update rate which are at least real information even
     // without write access.
+    // row_display(), not row_value() -- read-only, no chevron (see that
+    // helper's own comment).
     lv_obj_t *g3 = group(body, "GNSS");
-    row_value(g3, "Constellations", "GPS + GLO + GAL", UI_C_MUTED,
-              UI_SET_CONSTELLATIONS, &s->value[UI_SET_CONSTELLATIONS]);
+    row_display(g3, "Constellations", "GPS + GLO + GAL", UI_C_MUTED,
+                &s->value[UI_SET_CONSTELLATIONS]);
     ui_divider(g3);
-    row_value(g3, "Update rate", "5 Hz", UI_C_MUTED, UI_SET_UPDATE_RATE,
-              &s->value[UI_SET_UPDATE_RATE]);
+    row_display(g3, "Update rate", "5 Hz", UI_C_MUTED,
+                &s->value[UI_SET_UPDATE_RATE]);
 
     /* logging -------------------------------------------------------------- */
     // No ui_mark_placeholder() -- both rows are real (gps_ui_bridge.c wires
     // gps_log_active() and sd_card_get_usage() into them), the one group on
     // this screen that's fully wired.
     lv_obj_t *g4 = group(body, "LOGGING & STORAGE");
-    row_value(g4, "Track log", "Recording", UI_C_GREEN,
-              UI_SET_TRACK_LOG, &s->value[UI_SET_TRACK_LOG]);
+    // row_display() -- a live status readout, not a toggle (there's no
+    // write path to start/stop logging from this screen).
+    row_display(g4, "Track log", "Recording", UI_C_GREEN,
+                &s->value[UI_SET_TRACK_LOG]);
     ui_divider(g4);
     lv_obj_t *sd = row_base(g4, "SD card");
     s->sd_usage = ui_label(sd, "-- / -- GB", ui_font.s, UI_C_MUTED);
@@ -201,7 +260,11 @@ void ui_settings_set_brightness(ui_settings_t *s, int percent)
 void ui_settings_set_value(ui_settings_t *s, ui_setting_id_t id, const char *text)
 {
     if (!s || id >= UI_SET_COUNT || !s->value[id] || !text) return;
-    lv_label_set_text_fmt(s->value[id], "%s " LV_SYMBOL_RIGHT, text);
+    if (s_actionable[id]) {
+        lv_label_set_text_fmt(s->value[id], "%s " LV_SYMBOL_RIGHT, text);
+    } else {
+        lv_label_set_text(s->value[id], text);
+    }
 }
 
 void ui_settings_set_screen_on(ui_settings_t *s, bool on)
@@ -227,7 +290,9 @@ void ui_settings_set_track_log(ui_settings_t *s, bool recording)
 {
     if (!s) return;
     lv_obj_t *v = s->value[UI_SET_TRACK_LOG];
-    lv_label_set_text_fmt(v, "%s " LV_SYMBOL_RIGHT, recording ? "Recording" : "Not recording");
+    // Plain text, no chevron -- Track log is a row_display() row now (see
+    // ui_settings_create()), this used to bake the chevron in directly.
+    lv_label_set_text(v, recording ? "Recording" : "Not recording");
     lv_obj_set_style_text_color(v, recording ? UI_C_GREEN : UI_C_MUTED, 0);
 }
 

@@ -652,6 +652,17 @@ static void tick(void)
             snprintf(tz_buf, sizeof(tz_buf), "%s (UTC%s)", tz_abbrev,
                      strcmp(tz_abbrev, "CDT") == 0 ? "-5" : "-6");
             ui_settings_set_value(set_ui, UI_SET_TIMEZONE, tz_buf);
+
+            // This screen's header is hand-built (ui_settings_create()),
+            // not ui_status_create() like every other screen's, and got
+            // missed when the rest of the app went from decorative to
+            // real -- stuck at its creation-time "10:24 AM" forever
+            // (spotted directly by the user). No tz suffix, matching that
+            // original text -- just the time, same as the header had room
+            // for before.
+            char time_part[16];
+            format_clock(time_part, sizeof(time_part), local_tm.tm_hour, local_tm.tm_min, 0, false);
+            ui_status_set_clock(&set_ui->status, time_part);
         }
 
         // SD usage walks the FAT free-cluster chain (esp_vfs_fat_info()) --
