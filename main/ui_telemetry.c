@@ -6,10 +6,20 @@
 // math.h (same reasoning/value as gps_ui_bridge.c's own GPS_UI_PI).
 static const float UI_TELEM_PI = 3.14159265358979323846f;
 
-// Fixed square footprint (px) of the polar sky-plot drawn inside sky_wrap --
-// see ui_telemetry_create()'s sky view and ui_telemetry_set_sky()'s dx/dy
-// math, which both need the same radius.
+// Fixed square footprint (px) of the polar sky-plot drawn inside sky_wrap.
 #define UI_TELEM_SKY_D 420
+
+// Diameter of the outer (elevation=0) ring -- smaller than UI_TELEM_SKY_D,
+// leaving a margin inside plot's own box for the N/E/S/W labels. LVGL clips
+// children to their parent's box by default, independently at every level
+// of the tree (plot clips its own children unless plot itself is flagged
+// overflow-visible, then its parent independently does the same to plot's
+// whole rendering, and so on) -- chasing that up through sky/sig/body once
+// already turned into a losing game of whack-a-mole. Keeping the labels
+// inside plot's actual bounds sidesteps the whole thing instead. See
+// ui_telemetry_create()'s sky view and ui_telemetry_set_sky()'s dx/dy math,
+// which both need this same ring radius (not UI_TELEM_SKY_D's).
+#define UI_TELEM_RING_D 380
 
 static ui_telemetry_t s_tel;
 
@@ -43,7 +53,15 @@ static lv_obj_t *cell(lv_obj_t *parent, int grow, const char *caption,
     // left) alignment -- unlike Home's equivalent cards, which all
     // explicitly center -- and read as a layout mistake once actually
     // looked at side by side rather than one card at a time.
-    lv_obj_set_flex_align(c, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+    //
+    // Main-axis CENTER (not START): matters only when a card ends up
+    // taller than its own content -- currently just row3's FIX TYPE cell,
+    // force-matched to PDOP/VDOP's height below since it uses a shorter
+    // font -- where START would leave the caption+value pinned to the top
+    // with a dead gap underneath instead of centered like its row-mates.
+    // A no-op everywhere else: every other cell is already exactly as
+    // tall as its content, so there's no leftover space to place within.
+    lv_obj_set_flex_align(c, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
     ui_caption(c, caption);
     *out_value = ui_label(c, value, font, color);
@@ -132,11 +150,18 @@ ui_telemetry_t *ui_telemetry_create(lv_event_cb_t tab_cb)
 
     /* fix quality: PDOP/VDOP (GSA, not surfaced anywhere else) + 2D/3D fix -- */
     lv_obj_t *row3 = row(body);
-    cell(row3, 1, "PDOP", "1.4", ui_font.num_m, UI_C_GREEN, &t->pdop);
+    lv_obj_t *pdop_cell = cell(row3, 1, "PDOP", "1.4", ui_font.num_m, UI_C_GREEN, &t->pdop);
     cell(row3, 1, "VDOP", "1.8", ui_font.num_m, UI_C_GREEN, &t->vdop);
     // Text, not digits -- semi_m (not num_m) same as ui_home.c's other
     // text-valued cells (e.g. its trip_cell() moving-time value).
-    cell(row3, 1, "FIX TYPE", "3D FIX", ui_font.semi_m, UI_C_GREEN, &t->fix_type);
+    lv_obj_t *fix_cell = cell(row3, 1, "FIX TYPE", "3D FIX", ui_font.semi_m, UI_C_GREEN, &t->fix_type);
+    // semi_m's line height is shorter than num_m's big digits, which left
+    // this card visibly shorter than PDOP/VDOP beside it -- cell() sizes
+    // every card to LV_SIZE_CONTENT and flex has no per-item cross-axis
+    // stretch, so just measure the tallest row-mate once layout settles
+    // and match it explicitly.
+    lv_obj_update_layout(row3);
+    lv_obj_set_height(fix_cell, lv_obj_get_height(pdop_cell));
 
     /* signal --------------------------------------------------------------- */
     lv_obj_t *sig = ui_card(body);
@@ -153,10 +178,20 @@ ui_telemetry_t *ui_telemetry_create(lv_event_cb_t tab_cb)
     // flex_grow(1) so whichever is visible fills all the leftover height
     // this card's own flex_grow(1) already claims from body -- same
     // footprint either way, no layout jump when switching.
+    //
+    // Every ui_box() is clickable by default (lv_obj_constructor() sets
+    // LV_OBJ_FLAG_CLICKABLE unconditionally, see lv_obj.c -- ui_box() only
+    // strips SCROLLABLE) and LVGL hit-testing targets the deepest clickable
+    // object under the point, not the nearest ancestor with a handler, so
+    // every ui_box() child below (shead/bars_wrap/each bar/sky_wrap/plot/
+    // each dot) would otherwise silently steal the tap instead of it
+    // reaching sig. Each one gets LV_OBJ_FLAG_CLICKABLE removed right after
+    // creation so sig is the only clickable object anywhere in this card.
     lv_obj_add_flag(sig, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(sig, sky_toggle_cb, LV_EVENT_CLICKED, t);
 
     lv_obj_t *shead = ui_box(sig);
+    lv_obj_remove_flag(shead, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_size(shead, LV_PCT(100), LV_SIZE_CONTENT);
     // Stacked, not a side-by-side row -- with real data (not the original
     // 3-constellation demo string) the constellation list can run to all 5
@@ -191,6 +226,7 @@ ui_telemetry_t *ui_telemetry_create(lv_event_cb_t tab_cb)
     t->view_hint = ui_label(shead, "TAP FOR SKY VIEW", ui_font.xs, UI_C_DIM);
 
     lv_obj_t *bars = ui_box(sig);
+    lv_obj_remove_flag(bars, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_width(bars, LV_PCT(100));
     lv_obj_set_flex_grow(bars, 1);
     ui_flex_row(bars, 8);
@@ -204,6 +240,7 @@ ui_telemetry_t *ui_telemetry_create(lv_event_cb_t tab_cb)
     // height/visibility all come from real data now; no demo values.
     for (int i = 0; i < UI_TELEM_BARS; i++) {
         t->bars[i] = ui_box(bars);
+        lv_obj_remove_flag(t->bars[i], LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_flex_grow(t->bars[i], 1);
         lv_obj_set_style_radius(t->bars[i], 3, 0);
         lv_obj_set_style_bg_opa(t->bars[i], LV_OPA_COVER, 0);
@@ -215,44 +252,55 @@ ui_telemetry_t *ui_telemetry_create(lv_event_cb_t tab_cb)
      * via lv_obj_center(), independent of whatever height flex_grow(1)
      * ends up giving this wrapper). */
     lv_obj_t *sky = ui_box(sig);
+    lv_obj_remove_flag(sky, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_width(sky, LV_PCT(100));
     lv_obj_set_flex_grow(sky, 1);
     lv_obj_add_flag(sky, LV_OBJ_FLAG_HIDDEN);
     t->sky_wrap = sky;
 
     lv_obj_t *plot = ui_box(sky);
+    lv_obj_remove_flag(plot, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_size(plot, UI_TELEM_SKY_D, UI_TELEM_SKY_D);
     lv_obj_center(plot);
 
     // Elevation rings at 0/30/60 deg (90=zenith is the plot's own center,
-    // no ring needed for it) -- same hairline-circle style as ui_compass()'s
-    // inner ring in ui_theme.c, just three of them instead of one.
+    // no ring needed for it), sized off UI_TELEM_RING_D (not the bigger
+    // UI_TELEM_SKY_D plot box -- see that macro's own comment for why) --
+    // same hairline-circle style as ui_compass()'s inner ring in
+    // ui_theme.c, just three of them (and a bit thicker/brighter --
+    // ui_compass()'s 1px 0x2A3542 read as nearly invisible here on a much
+    // bigger ring where it has more room to matter).
     for (int ring = 0; ring < 3; ring++) {
         float elev_ring = ring * 30.0f;
-        lv_coord_t d = (lv_coord_t)(UI_TELEM_SKY_D * (1.0f - elev_ring / 90.0f));
+        lv_coord_t d = (lv_coord_t)(UI_TELEM_RING_D * (1.0f - elev_ring / 90.0f));
         lv_obj_t *circle = ui_box(plot);
+        lv_obj_remove_flag(circle, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_size(circle, d, d);
         lv_obj_center(circle);
         lv_obj_set_style_radius(circle, LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_bg_opa(circle, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_color(circle, lv_color_hex(0x2A3542), 0);
-        lv_obj_set_style_border_width(circle, 1, 0);
+        lv_obj_set_style_border_color(circle, lv_color_hex(0x445870), 0);
+        lv_obj_set_style_border_width(circle, 2, 0);
     }
 
+    // Sit in the margin between the outer ring and plot's own edge (see
+    // UI_TELEM_RING_D) -- inward offsets, so they stay inside plot's box
+    // (no clipping to fight) while still landing clear of the ring line.
     lv_obj_t *lbl_n = ui_label(plot, "N", ui_font.xs, UI_C_MUTED);
-    lv_obj_align(lbl_n, LV_ALIGN_TOP_MID, 0, -2);
+    lv_obj_align(lbl_n, LV_ALIGN_TOP_MID, 0, 2);
     lv_obj_t *lbl_e = ui_label(plot, "E", ui_font.xs, UI_C_MUTED);
-    lv_obj_align(lbl_e, LV_ALIGN_RIGHT_MID, 6, 0);
+    lv_obj_align(lbl_e, LV_ALIGN_RIGHT_MID, -6, 0);
     lv_obj_t *lbl_s = ui_label(plot, "S", ui_font.xs, UI_C_MUTED);
-    lv_obj_align(lbl_s, LV_ALIGN_BOTTOM_MID, 0, 2);
+    lv_obj_align(lbl_s, LV_ALIGN_BOTTOM_MID, 0, -2);
     lv_obj_t *lbl_w = ui_label(plot, "W", ui_font.xs, UI_C_MUTED);
-    lv_obj_align(lbl_w, LV_ALIGN_LEFT_MID, -6, 0);
+    lv_obj_align(lbl_w, LV_ALIGN_LEFT_MID, 6, 0);
 
     // All UI_TELEM_BARS dots created up front, same hidden-until-real-data
     // convention as t->bars[] above -- ui_telemetry_set_sky() positions/
     // colors/reveals however many satellites are actually in view.
     for (int i = 0; i < UI_TELEM_BARS; i++) {
         t->sky_dots[i] = ui_box(plot);
+        lv_obj_remove_flag(t->sky_dots[i], LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_size(t->sky_dots[i], 16, 16);
         lv_obj_set_style_radius(t->sky_dots[i], LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_bg_opa(t->sky_dots[i], LV_OPA_COVER, 0);
@@ -320,7 +368,11 @@ void ui_telemetry_set_sky(ui_telemetry_t *t, const uint8_t *elevation_deg,
         { UI_C_QZSS,    UI_C_QZSS_DIM },     // 4 QZSS
     };
     if (n > UI_TELEM_BARS) n = UI_TELEM_BARS;
-    const float r_max = (float)UI_TELEM_SKY_D / 2.0f;
+    // UI_TELEM_RING_D (the rings' own diameter), not UI_TELEM_SKY_D (the
+    // bigger plot box) -- a satellite right at the horizon (elevation 0)
+    // should land exactly on the outer ring, not out past it in the label
+    // margin.
+    const float r_max = (float)UI_TELEM_RING_D / 2.0f;
     for (int i = 0; i < UI_TELEM_BARS; i++) {
         if (i >= n) {
             lv_obj_add_flag(t->sky_dots[i], LV_OBJ_FLAG_HIDDEN);
