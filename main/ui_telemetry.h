@@ -29,13 +29,26 @@ typedef struct {
     lv_obj_t *vspeed;
     lv_obj_t *hdop;
 
+    // PDOP/VDOP/fix type: parsed from GSA (see gps.h's gps_state_t), same
+    // "in view, unused elsewhere on this screen" reasoning as vspeed/hdop
+    // above -- Home's ACCURACY card already covers the HDOP-derived
+    // feet/meters number these three don't restate.
+    lv_obj_t *pdop;
+    lv_obj_t *vdop;
+    lv_obj_t *fix_type;   /* "3D FIX" / "2D FIX" / "NO FIX" */
+
     lv_obj_t *local_caption;  /* "LOCAL | CDT" / "LOCAL | CST" -- see ui_telemetry_set_time() */
     lv_obj_t *local_time;
     lv_obj_t *utc_time;
 
     lv_obj_t *signal_caption;
     lv_obj_t *constellations;
+    lv_obj_t *view_hint;      /* "TAP FOR SKY VIEW" / "TAP FOR BAR VIEW" -- see sky_toggle_cb() */
+    lv_obj_t *bars_wrap;      /* flex-row container holding bars[] -- shown when !sky_mode */
     lv_obj_t *bars[UI_TELEM_BARS];
+    lv_obj_t *sky_wrap;       /* polar sky-plot container -- shown when sky_mode */
+    lv_obj_t *sky_dots[UI_TELEM_BARS];
+    bool sky_mode;            /* false = bar chart, true = polar sky view; see sky_toggle_cb() */
 } ui_telemetry_t;
 
 ui_telemetry_t *ui_telemetry_create(lv_event_cb_t tab_cb);
@@ -46,6 +59,9 @@ void ui_telemetry_set_position(ui_telemetry_t *t, double dd_lat, double dd_lon);
 // app_settings_get_elevation_m().
 void ui_telemetry_set_vspeed(ui_telemetry_t *t, int value, const char *unit);
 void ui_telemetry_set_hdop(ui_telemetry_t *t, float hdop);
+// pdop/vdop are raw DOP values (lower = better, same convention as HDOP);
+// fix_type is GSA field 3 as-is: 0 = not seen yet, 1 = no fix, 2 = 2D, 3 = 3D.
+void ui_telemetry_set_dop(ui_telemetry_t *t, float pdop, float vdop, int fix_type);
 // tz_abbrev updates the LOCAL card's own caption ("LOCAL | CDT"/"LOCAL |
 // CST") -- see gps_ui_bridge.c's us_central_from_utc(), which flips it
 // twice a year along with the actual UTC offset it applies.
@@ -68,6 +84,16 @@ void ui_telemetry_set_signal(ui_telemetry_t *t, const uint8_t *snr,
                              const bool *has_snr, const uint8_t *constellation,
                              const bool *used, int n, int used_count,
                              const char *constellations);
+
+// Same per-satellite indexing/cap as ui_telemetry_set_signal() above (call
+// both from the same loop) -- feeds the polar sky view's dot positions
+// instead of the bar chart's heights. elevation_deg is 0-90 (0=horizon,
+// 90=zenith); azimuth_deg is 0-359, clockwise from true north. Dots stay
+// positioned/colored even while the sky view is hidden (see sky_toggle_cb())
+// so it's already current the moment a tap reveals it.
+void ui_telemetry_set_sky(ui_telemetry_t *t, const uint8_t *elevation_deg,
+                          const uint16_t *azimuth_deg, const uint8_t *constellation,
+                          const bool *used, int n);
 
 #ifdef __cplusplus
 }

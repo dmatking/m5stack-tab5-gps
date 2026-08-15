@@ -468,6 +468,10 @@ static void tick(void)
             ui_telemetry_set_hdop(t, st.hdop);
         }
 
+        if (st.dop_valid) {
+            ui_telemetry_set_dop(t, st.pdop, st.vdop, st.fix_type);
+        }
+
         // Unlike Home's single (now Central) clock, Telemetry has room for
         // both a real LOCAL (Central) and a real UTC card side by side --
         // no UTC-vs-local tradeoff to make here, just show both for real.
@@ -512,10 +516,12 @@ static void tick(void)
             "#" UI_C_BEIDOU_HEX  " BEIDOU#",
             "#" UI_C_QZSS_HEX    " QZSS#",
         };
-        uint8_t sig_snr[UI_TELEM_BARS];
-        bool    sig_has_snr[UI_TELEM_BARS];
-        uint8_t sig_const[UI_TELEM_BARS];
-        bool    sig_used[UI_TELEM_BARS];
+        uint8_t  sig_snr[UI_TELEM_BARS];
+        bool     sig_has_snr[UI_TELEM_BARS];
+        uint8_t  sig_const[UI_TELEM_BARS];
+        bool     sig_used[UI_TELEM_BARS];
+        uint8_t  sig_elev[UI_TELEM_BARS];
+        uint16_t sig_azim[UI_TELEM_BARS];
         int n = st.satellite_count;
         for (int i = 0; i < n && i < UI_TELEM_BARS; i++) {
             const gps_satellite_t *sat = &st.satellites[i];
@@ -523,6 +529,8 @@ static void tick(void)
             sig_has_snr[i]  = sat->has_snr;
             sig_const[i]    = (uint8_t)sat->constellation;
             sig_used[i]     = sat->used_in_solution;
+            sig_elev[i]     = sat->elevation_deg;
+            sig_azim[i]     = sat->azimuth_deg;
         }
         if (n > UI_TELEM_BARS) n = UI_TELEM_BARS;
 
@@ -543,6 +551,10 @@ static void tick(void)
 
         ui_telemetry_set_signal(t, sig_snr, sig_has_snr, sig_const, sig_used,
                                 n, sats_used_total, const_buf);
+        // Polar sky view -- same satellites, same tick, just a different
+        // pair of fields (elevation/azimuth instead of SNR) feeding a
+        // different (currently hidden, see sky_toggle_cb()) visualization.
+        ui_telemetry_set_sky(t, sig_elev, sig_azim, sig_const, sig_used, n);
     }
 
     // ---- Nav screen (active navigation) ------------------------------------

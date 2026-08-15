@@ -1,6 +1,33 @@
 #include "ui_telemetry.h"
 
+#include <math.h>
+
+// Local pi, not libc's M_PI -- not guaranteed defined by this toolchain's
+// math.h (same reasoning/value as gps_ui_bridge.c's own GPS_UI_PI).
+static const float UI_TELEM_PI = 3.14159265358979323846f;
+
+// Fixed square footprint (px) of the polar sky-plot drawn inside sky_wrap --
+// see ui_telemetry_create()'s sky view and ui_telemetry_set_sky()'s dx/dy
+// math, which both need the same radius.
+#define UI_TELEM_SKY_D 420
+
 static ui_telemetry_t s_tel;
+
+static void sky_toggle_cb(lv_event_t *e)
+{
+    ui_telemetry_t *t = lv_event_get_user_data(e);
+    if (!t) return;
+    t->sky_mode = !t->sky_mode;
+    if (t->sky_mode) {
+        lv_obj_add_flag(t->bars_wrap, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(t->sky_wrap, LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(t->view_hint, "TAP FOR BAR VIEW");
+    } else {
+        lv_obj_remove_flag(t->bars_wrap, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(t->sky_wrap, LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(t->view_hint, "TAP FOR SKY VIEW");
+    }
+}
 
 static lv_obj_t *cell(lv_obj_t *parent, int grow, const char *caption,
                       const char *value, const lv_font_t *font,
@@ -103,6 +130,14 @@ ui_telemetry_t *ui_telemetry_create(lv_event_cb_t tab_cb)
     t->local_time = ui_label(local_card, "10:24:18", ui_font.num_m, UI_C_TEXT);
     cell(row2, 1, "UTC", "15:24:18", ui_font.num_m, UI_C_MUTED, &t->utc_time);
 
+    /* fix quality: PDOP/VDOP (GSA, not surfaced anywhere else) + 2D/3D fix -- */
+    lv_obj_t *row3 = row(body);
+    cell(row3, 1, "PDOP", "1.4", ui_font.num_m, UI_C_GREEN, &t->pdop);
+    cell(row3, 1, "VDOP", "1.8", ui_font.num_m, UI_C_GREEN, &t->vdop);
+    // Text, not digits -- semi_m (not num_m) same as ui_home.c's other
+    // text-valued cells (e.g. its trip_cell() moving-time value).
+    cell(row3, 1, "FIX TYPE", "3D FIX", ui_font.semi_m, UI_C_GREEN, &t->fix_type);
+
     /* signal --------------------------------------------------------------- */
     lv_obj_t *sig = ui_card(body);
     lv_obj_set_width(sig, LV_PCT(100));
@@ -110,8 +145,16 @@ ui_telemetry_t *ui_telemetry_create(lv_event_cb_t tab_cb)
     lv_obj_set_style_pad_hor(sig, 20, 0);
     lv_obj_set_style_pad_ver(sig, 16, 0);
     ui_flex_col(sig, 10);
-    lv_obj_set_flex_align(sig, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_START,
+    lv_obj_set_flex_align(sig, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START,
                           LV_FLEX_ALIGN_START);
+    // Whole card toggles bar chart <-> polar sky view on tap (see
+    // sky_toggle_cb()) -- simplest hit target, and there's nothing else on
+    // this card worth tapping separately. bars_wrap/sky_wrap below both use
+    // flex_grow(1) so whichever is visible fills all the leftover height
+    // this card's own flex_grow(1) already claims from body -- same
+    // footprint either way, no layout jump when switching.
+    lv_obj_add_flag(sig, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(sig, sky_toggle_cb, LV_EVENT_CLICKED, t);
 
     lv_obj_t *shead = ui_box(sig);
     lv_obj_set_size(shead, LV_PCT(100), LV_SIZE_CONTENT);
@@ -145,11 +188,15 @@ ui_telemetry_t *ui_telemetry_create(lv_event_cb_t tab_cb)
     // color (UI_C_MUTED, set above) since they're outside any tag.
     lv_label_set_recolor(t->constellations, true);
 
+    t->view_hint = ui_label(shead, "TAP FOR SKY VIEW", ui_font.xs, UI_C_DIM);
+
     lv_obj_t *bars = ui_box(sig);
-    lv_obj_set_size(bars, LV_PCT(100), 96);
+    lv_obj_set_width(bars, LV_PCT(100));
+    lv_obj_set_flex_grow(bars, 1);
     ui_flex_row(bars, 8);
     lv_obj_set_flex_align(bars, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END,
                           LV_FLEX_ALIGN_END);
+    t->bars_wrap = bars;
     // All UI_TELEM_BARS created up front, hidden until ui_telemetry_set_signal()
     // has real satellites to show -- hidden flex items don't take up row
     // space, so however many end up visible auto-fill the width via
@@ -161,6 +208,55 @@ ui_telemetry_t *ui_telemetry_create(lv_event_cb_t tab_cb)
         lv_obj_set_style_radius(t->bars[i], 3, 0);
         lv_obj_set_style_bg_opa(t->bars[i], LV_OPA_COVER, 0);
         lv_obj_add_flag(t->bars[i], LV_OBJ_FLAG_HIDDEN);
+    }
+
+    /* sky: polar elevation/azimuth view, hidden until sky_toggle_cb() flips
+     * to it -- not a flex container itself (plot below is absolute-centered
+     * via lv_obj_center(), independent of whatever height flex_grow(1)
+     * ends up giving this wrapper). */
+    lv_obj_t *sky = ui_box(sig);
+    lv_obj_set_width(sky, LV_PCT(100));
+    lv_obj_set_flex_grow(sky, 1);
+    lv_obj_add_flag(sky, LV_OBJ_FLAG_HIDDEN);
+    t->sky_wrap = sky;
+
+    lv_obj_t *plot = ui_box(sky);
+    lv_obj_set_size(plot, UI_TELEM_SKY_D, UI_TELEM_SKY_D);
+    lv_obj_center(plot);
+
+    // Elevation rings at 0/30/60 deg (90=zenith is the plot's own center,
+    // no ring needed for it) -- same hairline-circle style as ui_compass()'s
+    // inner ring in ui_theme.c, just three of them instead of one.
+    for (int ring = 0; ring < 3; ring++) {
+        float elev_ring = ring * 30.0f;
+        lv_coord_t d = (lv_coord_t)(UI_TELEM_SKY_D * (1.0f - elev_ring / 90.0f));
+        lv_obj_t *circle = ui_box(plot);
+        lv_obj_set_size(circle, d, d);
+        lv_obj_center(circle);
+        lv_obj_set_style_radius(circle, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_opa(circle, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_color(circle, lv_color_hex(0x2A3542), 0);
+        lv_obj_set_style_border_width(circle, 1, 0);
+    }
+
+    lv_obj_t *lbl_n = ui_label(plot, "N", ui_font.xs, UI_C_MUTED);
+    lv_obj_align(lbl_n, LV_ALIGN_TOP_MID, 0, -2);
+    lv_obj_t *lbl_e = ui_label(plot, "E", ui_font.xs, UI_C_MUTED);
+    lv_obj_align(lbl_e, LV_ALIGN_RIGHT_MID, 6, 0);
+    lv_obj_t *lbl_s = ui_label(plot, "S", ui_font.xs, UI_C_MUTED);
+    lv_obj_align(lbl_s, LV_ALIGN_BOTTOM_MID, 0, 2);
+    lv_obj_t *lbl_w = ui_label(plot, "W", ui_font.xs, UI_C_MUTED);
+    lv_obj_align(lbl_w, LV_ALIGN_LEFT_MID, -6, 0);
+
+    // All UI_TELEM_BARS dots created up front, same hidden-until-real-data
+    // convention as t->bars[] above -- ui_telemetry_set_sky() positions/
+    // colors/reveals however many satellites are actually in view.
+    for (int i = 0; i < UI_TELEM_BARS; i++) {
+        t->sky_dots[i] = ui_box(plot);
+        lv_obj_set_size(t->sky_dots[i], 16, 16);
+        lv_obj_set_style_radius(t->sky_dots[i], LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_opa(t->sky_dots[i], LV_OPA_COVER, 0);
+        lv_obj_add_flag(t->sky_dots[i], LV_OBJ_FLAG_HIDDEN);
     }
 
     ui_navbar_create(scr, UI_TAB_TELEMETRY, tab_cb);
@@ -185,6 +281,67 @@ void ui_telemetry_set_hdop(ui_telemetry_t *t, float hdop)
     if (!t) return;
     lv_label_set_text_fmt(t->hdop, "%.1f", hdop);
     lv_obj_set_style_text_color(t->hdop, hdop <= 1.5f ? UI_C_GREEN : UI_C_RED, 0);
+}
+
+void ui_telemetry_set_dop(ui_telemetry_t *t, float pdop, float vdop, int fix_type)
+{
+    if (!t) return;
+    // Same 1.5 "good" threshold ui_telemetry_set_hdop() already uses for
+    // HDOP -- PDOP/VDOP are the same dilution-of-precision quantity on
+    // different axes, no reason for a different cutoff.
+    lv_label_set_text_fmt(t->pdop, "%.1f", pdop);
+    lv_obj_set_style_text_color(t->pdop, pdop <= 1.5f ? UI_C_GREEN : UI_C_RED, 0);
+    lv_label_set_text_fmt(t->vdop, "%.1f", vdop);
+    lv_obj_set_style_text_color(t->vdop, vdop <= 1.5f ? UI_C_GREEN : UI_C_RED, 0);
+
+    const char *text = fix_type == 3 ? "3D FIX"
+                      : fix_type == 2 ? "2D FIX"
+                      : fix_type == 1 ? "NO FIX" : "--";
+    lv_label_set_text(t->fix_type, text);
+    // 2D fix means altitude (and everything derived from it -- vertical
+    // speed, elevation gain) isn't trustworthy, same "flag it red" language
+    // as a weak HDOP/PDOP/VDOP above.
+    lv_obj_set_style_text_color(t->fix_type, fix_type == 3 ? UI_C_GREEN : UI_C_RED, 0);
+}
+
+void ui_telemetry_set_sky(ui_telemetry_t *t, const uint8_t *elevation_deg,
+                          const uint16_t *azimuth_deg, const uint8_t *constellation,
+                          const bool *used, int n)
+{
+    if (!t) return;
+    // Same 5-entry bright/dim table as ui_telemetry_set_signal() -- kept as
+    // its own local copy rather than shared, same reasoning as that
+    // function's own copy (lv_color_hex() isn't a constant expression).
+    const struct { lv_color_t bright, dim; } const_colors[5] = {
+        { UI_C_GREEN,   UI_C_GREEN_DIM },    // 0 GPS
+        { UI_C_GLONASS, UI_C_GLONASS_DIM },  // 1 GLONASS
+        { UI_C_GALILEO, UI_C_GALILEO_DIM },  // 2 Galileo
+        { UI_C_BEIDOU,  UI_C_BEIDOU_DIM },   // 3 BeiDou
+        { UI_C_QZSS,    UI_C_QZSS_DIM },     // 4 QZSS
+    };
+    if (n > UI_TELEM_BARS) n = UI_TELEM_BARS;
+    const float r_max = (float)UI_TELEM_SKY_D / 2.0f;
+    for (int i = 0; i < UI_TELEM_BARS; i++) {
+        if (i >= n) {
+            lv_obj_add_flag(t->sky_dots[i], LV_OBJ_FLAG_HIDDEN);
+            continue;
+        }
+        lv_obj_remove_flag(t->sky_dots[i], LV_OBJ_FLAG_HIDDEN);
+
+        float elev = elevation_deg[i] > 90 ? 90.0f : (float)elevation_deg[i];
+        float r = r_max * (1.0f - elev / 90.0f);
+        float az_rad = (float)azimuth_deg[i] * (UI_TELEM_PI / 180.0f);
+        // North (az=0) is straight up -- negative y -- east (az=90) is
+        // straight right, matching the N/E/S/W labels planted around the
+        // ring in ui_telemetry_create().
+        lv_coord_t dx = (lv_coord_t)(r * sinf(az_rad));
+        lv_coord_t dy = (lv_coord_t)(-r * cosf(az_rad));
+        lv_obj_align(t->sky_dots[i], LV_ALIGN_CENTER, dx, dy);
+
+        uint8_t c = (constellation[i] < 5) ? constellation[i] : 0;
+        lv_obj_set_style_bg_color(t->sky_dots[i],
+                                  used[i] ? const_colors[c].bright : const_colors[c].dim, 0);
+    }
 }
 
 void ui_telemetry_set_time(ui_telemetry_t *t, const char *local, const char *utc,

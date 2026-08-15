@@ -5,9 +5,10 @@
 // M5-Bus connector. Adapted from esp32-idf-new/modules/gps/_common/gps.c
 // (a chip-agnostic NMEA parser reused across this project family) --
 // see gps.h for what changed. Parses $G[NP]GGA (fix/position/time/sat
-// count) and $G[NP]RMC (fix/position/speed/heading/date) into a
-// thread-safe snapshot; anything else (GSA/GSV/GLL/ZDA/TXT) is ignored,
-// same as upstream.
+// count), $G[NP]RMC (fix/position/speed/heading/date), $GxGSA (DOP/fix
+// type/used-satellite PRNs) and $GxGSV (per-satellite elevation/azimuth/
+// SNR) into a thread-safe snapshot; anything else (GLL/ZDA/TXT) is
+// ignored.
 //
 // Pins/power confirmed working on real hardware 2026-07-27 -- see
 // [[reference-gps-module-hw]]: UART1 (not UART0, that's the console),
@@ -203,7 +204,7 @@ static void handle_gsa(char *sentence)
     char *cursor = sentence;
     (void)next_field(&cursor);  // $GxGSA
     (void)next_field(&cursor);  // mode1 (M/A) -- not used
-    (void)next_field(&cursor);  // fix type (1/2/3) -- not used here; GGA/RMC already cover fix state
+    char *fix_type_s = next_field(&cursor);  // fix type: 1=no fix, 2=2D, 3=3D
 
     uint8_t prns[12];
     int n = 0;
@@ -211,9 +212,9 @@ static void handle_gsa(char *sentence)
         char *f = next_field(&cursor);
         if (f && f[0] != '\0') prns[n++] = (uint8_t)atoi(f);
     }
-    (void)next_field(&cursor);  // PDOP -- not surfaced anywhere yet
+    char *pdop_s = next_field(&cursor);
     (void)next_field(&cursor);  // HDOP -- GGA's own HDOP field is what feeds the rest of the app already
-    (void)next_field(&cursor);  // VDOP -- not surfaced anywhere yet
+    char *vdop_s = next_field(&cursor);
     char *sys_id = next_field(&cursor);  // trailing system ID -- see file header comment
     if (sys_id && sys_id[0] != '\0') {
         c = system_id_to_constellation(atoi(sys_id));
@@ -224,6 +225,18 @@ static void handle_gsa(char *sentence)
     s_used_count[c] = n;
     memcpy(s_used_prns[c], prns, (size_t)n);
     reapply_used_flags_locked(c);
+    // This module's GSA talker is always "GN" (see this function's own
+    // comment above) -- a single combined solution, not per-constellation,
+    // so DOP/fix type are plain s_state fields rather than living in the
+    // s_used_count[]-style per-constellation arrays above.
+    if (fix_type_s && fix_type_s[0] != '\0') {
+        s_state.fix_type = atoi(fix_type_s);
+    }
+    if (pdop_s && pdop_s[0] != '\0' && vdop_s && vdop_s[0] != '\0') {
+        s_state.pdop = strtof(pdop_s, NULL);
+        s_state.vdop = strtof(vdop_s, NULL);
+        s_state.dop_valid = true;
+    }
     xSemaphoreGive(s_mutex);
 }
 

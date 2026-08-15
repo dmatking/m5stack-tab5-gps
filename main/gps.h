@@ -69,6 +69,10 @@ typedef struct {
     float heading_deg;      // true track from RMC
     float hdop;             // horizontal dilution of precision (lower = better)
     float altitude_m;       // antenna altitude above mean sea level, meters
+    float pdop;             // position (3D) dilution of precision, from GSA
+    float vdop;             // vertical dilution of precision, from GSA
+    bool dop_valid;         // pdop/vdop populated (GSA has arrived at least once)
+    int fix_type;           // GSA field 3: 1=no fix, 2=2D, 3=3D; 0 until GSA arrives
     int sats_in_use;
     float fix_rate_hz;      // measured GGA-to-GGA interval, not a config value read from the module -- see handle_gga()
     bool fix_rate_valid;    // false until a second GGA sentence arrives to measure an interval from
