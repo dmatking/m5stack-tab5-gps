@@ -10,11 +10,6 @@
 // (main/design_ui.h) and gps_init() has started the GPS reader -- both must
 // already exist by the first tick.
 //
-// Not wired to real data (deliberately, not an oversight):
-// - Battery percent -- no fuel-gauge hardware touched yet in this project.
-// - Telemetry's satellite signal bars + constellation list -- would need
-//   GSV sentence parsing (per-satellite SNR/visibility) that main/gps.c
-//   doesn't do yet. Stays at ui_telemetry_create()'s demo values.
 void gps_ui_bridge_start(void);
 
 // Zeroes the trip accumulator (distance/max-speed/moving-time/elevation-gain)
@@ -22,3 +17,10 @@ void gps_ui_bridge_start(void);
 // ui_home_set_reset_trip_cb() has something real to call; not expected to
 // be called directly elsewhere.
 void gps_ui_bridge_reset_trip(void);
+
+// Saves the current GPS position as a waypoint (main/waypoints.h) and
+// flashes the outcome on Home's Mark Position button. Lives here rather
+// than in design_ui.c because it needs the live fix. Wired as Home's mark
+// callback by gps_ui_bridge_start(); no-ops with a message if there's no
+// fix to save.
+void gps_ui_bridge_mark_waypoint(void);

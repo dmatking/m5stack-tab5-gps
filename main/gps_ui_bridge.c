@@ -18,6 +18,7 @@
 #include "design_ui.h"
 #include "gps.h"
 #include "sd_card.h"
+#include "waypoints.h"
 
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
@@ -798,6 +799,30 @@ void gps_ui_bridge_reset_trip(void)
     s_have_prev_alt = false;
 }
 
+void gps_ui_bridge_mark_waypoint(void)
+{
+    // Runs on the LVGL task (LVGL's lock is held by the click dispatch) and
+    // takes gps.c's mutex inside gps_get_state(). tick() acquires the same
+    // two in the opposite order but never holds both -- gps_get_state()
+    // copies and releases well before lvgl_port_lock(). Don't "tidy"
+    // gps_get_state() into tick()'s locked section: that would close the
+    // gap into a real lock-order inversion.
+    gps_state_t st = gps_get_state();
+
+    const char *msg;
+    if (!gps_has_fix() || !st.latlon_valid) {
+        msg = "No GPS fix";
+    } else {
+        waypoint_t w;
+        switch (waypoints_add(st.latitude_deg, st.longitude_deg, &w)) {
+        case WAYPOINTS_OK:        msg = w.name;        break;
+        case WAYPOINTS_ERR_FULL:  msg = "Storage full"; break;
+        default:                  msg = "Save failed";  break;
+        }
+    }
+    ui_home_flash_mark(ui_home(), msg);
+}
+
 static void bridge_task(void *arg)
 {
     (void)arg;
@@ -811,7 +836,10 @@ static void bridge_task(void *arg)
 void gps_ui_bridge_start(void)
 {
     ui_home_t *h = ui_home();
-    if (h) ui_home_set_reset_trip_cb(h, gps_ui_bridge_reset_trip);
+    if (h) {
+        ui_home_set_reset_trip_cb(h, gps_ui_bridge_reset_trip);
+        ui_home_set_mark_cb(h, gps_ui_bridge_mark_waypoint);
+    }
 
     xTaskCreate(bridge_task, "gps_ui_bridge", 4096, NULL, 3, NULL);
 }
