@@ -26,6 +26,11 @@ void ui_init(void);
  * to the native map renderer instead of loading ui_map's own screen. */
 void ui_show_tab(ui_tab_t tab);
 void ui_show_goto(void);
+
+// Rebuilds Goto's saved-waypoint list from main/waypoints.h. Called on
+// every entry to the Goto screen, and must also be called after any
+// change to the store -- the list rows carry indices into it.
+void ui_goto_refresh_saved(void);
 void ui_show_nav(void);
 
 /* Flips what UI_TAB_NAV resolves to and reveals the map's route overlay. */

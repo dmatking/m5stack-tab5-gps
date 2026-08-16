@@ -23,6 +23,19 @@ static void refresh_fields(ui_goto_t *g)
     lv_label_set_text(g->lon_hemi, g->lon_east ? "E" : "W");
 }
 
+/* Saved-list row actions. Set from design_ui.c, which owns the store. */
+static void (*s_saved_go_cb)(int index);
+static void (*s_saved_del_cb)(int index);
+// Forward-declared: ui_goto_create() attaches this to the recent-waypoint
+// card (always index 0, the newest) before its real definition further
+// down, where the saved-list rows also use it.
+static void saved_row_cb(lv_event_t *e);
+
+static void seg_cb(lv_event_t *e)
+{
+    ui_goto_set_tab(&s_goto, (bool)(lv_uintptr_t)lv_event_get_user_data(e));
+}
+
 static void field_cb(lv_event_t *e)
 {
     ui_goto_t *g = &s_goto;
@@ -124,10 +137,9 @@ ui_goto_t *ui_goto_create(lv_event_cb_t tab_cb)
     ui_flex_col(body, 12);
 
     /* entry / saved segmented control -------------------------------------- */
+    // No ui_mark_placeholder() -- both halves are real now: they switch
+    // between the coordinate keypad and the saved-waypoint list below.
     lv_obj_t *seg = ui_card(body);
-    // "Saved waypoints" has no event handler at all -- tapping it does
-    // nothing right now (no waypoint storage exists yet). See project notes.
-    ui_mark_placeholder(seg);
     lv_obj_set_width(seg, LV_PCT(100));
     lv_obj_set_height(seg, LV_SIZE_CONTENT);
     lv_obj_set_style_pad_all(seg, 6, 0);
@@ -137,21 +149,23 @@ ui_goto_t *ui_goto_create(lv_event_cb_t tab_cb)
     lv_obj_set_size(g->tab_entry, LV_SIZE_CONTENT, 64);
     lv_obj_set_flex_grow(g->tab_entry, 1);
     lv_obj_set_style_radius(g->tab_entry, 12, 0);
-    lv_obj_set_style_bg_color(g->tab_entry, UI_C_BLUE_BTN, 0);
-    lv_obj_set_style_bg_opa(g->tab_entry, LV_OPA_COVER, 0);
-    lv_obj_t *te = ui_label(g->tab_entry, "Enter coordinates", ui_font.semi_s, UI_C_TEXT);
-    lv_obj_center(te);
+    lv_obj_add_flag(g->tab_entry, LV_OBJ_FLAG_CLICKABLE);   // was display-only
+    lv_obj_add_event_cb(g->tab_entry, seg_cb, LV_EVENT_CLICKED, (void *)(lv_uintptr_t)false);
+    g->tab_entry_label = ui_label(g->tab_entry, "Enter coordinates", ui_font.semi_s, UI_C_TEXT);
+    lv_obj_center(g->tab_entry_label);
 
     g->tab_saved = ui_box(seg);
     lv_obj_set_size(g->tab_saved, LV_SIZE_CONTENT, 64);
     lv_obj_set_flex_grow(g->tab_saved, 1);
     lv_obj_set_style_radius(g->tab_saved, 12, 0);
     lv_obj_add_flag(g->tab_saved, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_t *ts = ui_label(g->tab_saved, "Saved waypoints", ui_font.s, UI_C_MUTED);
-    lv_obj_center(ts);
+    lv_obj_add_event_cb(g->tab_saved, seg_cb, LV_EVENT_CLICKED, (void *)(lv_uintptr_t)true);
+    g->tab_saved_label = ui_label(g->tab_saved, "Saved waypoints", ui_font.s, UI_C_MUTED);
+    lv_obj_center(g->tab_saved_label);
 
     /* coordinate format ---------------------------------------------------- */
     lv_obj_t *fmts = ui_box(body);
+    g->fmts = fmts;
     lv_obj_set_size(fmts, LV_PCT(100), LV_SIZE_CONTENT);
     ui_flex_row(fmts, 8);
     for (int i = 0; i < 3; i++) {
@@ -177,6 +191,7 @@ ui_goto_t *ui_goto_create(lv_event_cb_t tab_cb)
 
     /* keypad --------------------------------------------------------------- */
     lv_obj_t *pad = ui_box(body);
+    g->pad = pad;
     lv_obj_set_size(pad, LV_PCT(100), LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(pad, LV_FLEX_FLOW_ROW_WRAP);
     lv_obj_set_style_pad_column(pad, 10, 0);
@@ -195,34 +210,66 @@ ui_goto_t *ui_goto_create(lv_event_cb_t tab_cb)
     }
 
     /* recent waypoint ------------------------------------------------------- */
+    // No ui_mark_placeholder() -- real now: shows the most recently saved
+    // waypoint (waypoints_get(0), design_ui.c's ui_goto_refresh_saved()) and
+    // navigates to it on tap, same as a row in the saved list. Hidden
+    // entirely with an empty store (ui_goto_set_recent(g, NULL, NULL)) --
+    // there's nothing "recent" to show yet. Distance/bearing dropped from
+    // the old demo text ("last used | 6.4 mi | 094°") -- that needs a live
+    // position tick this card doesn't have; just name and coordinates.
     lv_obj_t *rec = ui_card(body);
-    // Fixed demo waypoint ("Gemini Bridges"), and clickable in name only --
-    // no event handler either. See project notes.
-    ui_mark_placeholder(rec);
+    g->rec = rec;
     lv_obj_set_width(rec, LV_PCT(100));
     lv_obj_set_height(rec, LV_SIZE_CONTENT);
     lv_obj_set_style_pad_hor(rec, 20, 0);
     lv_obj_set_style_pad_ver(rec, 12, 0);
     lv_obj_add_flag(rec, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(rec, saved_row_cb, LV_EVENT_CLICKED, (void *)(lv_uintptr_t)0);
     ui_flex_row(rec, 14);
     lv_obj_set_flex_align(rec, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
 
     lv_obj_t *rleft = ui_box(rec);
+    lv_obj_remove_flag(rleft, LV_OBJ_FLAG_CLICKABLE);   // let the card underneath keep the tap
     lv_obj_set_size(rleft, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     ui_flex_row(rleft, 14);
     lv_obj_set_flex_align(rleft, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
     ui_label(rleft, LV_SYMBOL_GPS, ui_font.semi_s, UI_C_GREEN);
     lv_obj_t *rtext = ui_box(rleft);
+    lv_obj_remove_flag(rtext, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_size(rtext, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     ui_flex_col(rtext, 2);
-    g->recent_name = ui_label(rtext, "Gemini Bridges", ui_font.semi_s, UI_C_TEXT);
-    // "|" not "\xC2\xB7" (·) -- see ui_home.c's ± comment; same missing-
-    // glyph issue, different character, same fix (ASCII substitute).
-    g->recent_meta = ui_label(rtext, "last used | 6.4 mi | 094\xC2\xB0",
-                              ui_font.xs, UI_C_MUTED);
+    g->recent_name = ui_label(rtext, "WPT 001", ui_font.semi_s, UI_C_TEXT);
+    g->recent_meta = ui_label(rtext, "32.9021, -97.3261", ui_font.xs, UI_C_MUTED);
     ui_label(rec, "Load " LV_SYMBOL_RIGHT, ui_font.s, UI_C_BLUE);
+
+    /* saved pane: the waypoint list ---------------------------------------- */
+    // The first scrollable container in this app -- every screen (and
+    // ui_box() itself) strips LV_OBJ_FLAG_SCROLLABLE, so it has to be put
+    // back deliberately here, along with an explicit vertical-only scroll
+    // direction. flex_grow gives it a bounded height, which is what makes
+    // scrolling mean anything: without it the container would just grow to
+    // fit every row and never scroll.
+    g->saved_list = ui_box(body);
+    lv_obj_remove_flag(g->saved_list, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_width(g->saved_list, LV_PCT(100));
+    lv_obj_set_flex_grow(g->saved_list, 1);
+    lv_obj_add_flag(g->saved_list, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(g->saved_list, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(g->saved_list, LV_SCROLLBAR_MODE_AUTO);
+    ui_flex_col(g->saved_list, 8);
+    lv_obj_add_flag(g->saved_list, LV_OBJ_FLAG_HIDDEN);   // entry pane is the default
+
+    // Shown instead of rows when the store is empty, so the pane never just
+    // looks broken.
+    g->saved_empty = ui_label(body, "No saved waypoints yet\n"
+                                    "Use Mark Position on the Home screen.",
+                              ui_font.s, UI_C_DIM);
+    lv_obj_set_width(g->saved_empty, LV_PCT(100));
+    lv_label_set_long_mode(g->saved_empty, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_align(g->saved_empty, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_add_flag(g->saved_empty, LV_OBJ_FLAG_HIDDEN);
 
     /* footer ---------------------------------------------------------------- */
     lv_obj_t *spacer = ui_box(body);
@@ -238,6 +285,7 @@ ui_goto_t *ui_goto_create(lv_event_cb_t tab_cb)
     g->btn_cancel = ui_button(bl, "Cancel", UI_C_CARD, UI_C_MUTED, true,
                               UI_C_BORDER, 92);
     lv_obj_t *br = ui_box(btns);
+    g->btn_start_wrap = br;
     lv_obj_set_size(br, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     lv_obj_set_flex_grow(br, 2);
     g->btn_start = ui_button(br, "Start Navigation", UI_C_BLUE_BTN, UI_C_TEXT,
@@ -245,10 +293,144 @@ ui_goto_t *ui_goto_create(lv_event_cb_t tab_cb)
 
     ui_navbar_create(scr, UI_TAB_NAV, tab_cb);
     refresh_fields(g);
+    // Entry pane is the default -- also does the initial tab styling and
+    // hides the saved pane / Start Navigation consistently, rather than
+    // relying on the creation-time flags above staying in sync with it.
+    ui_goto_set_tab(g, false);
     return g;
 }
 
 /* ------------------------------------------------------------------ setters */
+
+// Re-derives every bit of visibility that depends on saved_mode/has_recent/
+// list-contents together, rather than each caller (tab switched, list
+// refreshed, recent card updated) trying to patch just its own piece and
+// risk fighting one of the others.
+static void update_saved_visibility(ui_goto_t *g)
+{
+    bool empty = (lv_obj_get_child_count(g->saved_list) == 0);
+    bool show_list  = g->saved_mode && !empty;
+    bool show_empty = g->saved_mode && empty;
+    if (show_list)  lv_obj_remove_flag(g->saved_list, LV_OBJ_FLAG_HIDDEN);
+    else            lv_obj_add_flag(g->saved_list, LV_OBJ_FLAG_HIDDEN);
+    if (show_empty) lv_obj_remove_flag(g->saved_empty, LV_OBJ_FLAG_HIDDEN);
+    else            lv_obj_add_flag(g->saved_empty, LV_OBJ_FLAG_HIDDEN);
+
+    // rec (the recent-waypoint card) belongs only to the entry pane, same
+    // as fmts/lat_card/lon_card/pad, but ALSO needs to stay hidden there
+    // when there's nothing recent to show -- two independent conditions,
+    // which is why it's handled here instead of in set_tab()'s flat list.
+    bool show_rec = !g->saved_mode && g->has_recent;
+    if (show_rec) lv_obj_remove_flag(g->rec, LV_OBJ_FLAG_HIDDEN);
+    else          lv_obj_add_flag(g->rec, LV_OBJ_FLAG_HIDDEN);
+}
+
+void ui_goto_set_tab(ui_goto_t *g, bool saved)
+{
+    if (!g) return;
+    g->saved_mode = saved;
+
+    // Entry-group widgets: direct, flat children of `body`, individually
+    // hidden -- see ui_goto.h's own comment on why there's no wrapping
+    // pane container to toggle instead.
+    lv_obj_t *entry_widgets[] = { g->fmts, g->lat_card, g->lon_card, g->pad };
+    for (size_t i = 0; i < sizeof(entry_widgets) / sizeof(entry_widgets[0]); i++) {
+        if (saved) lv_obj_add_flag(entry_widgets[i], LV_OBJ_FLAG_HIDDEN);
+        else       lv_obj_remove_flag(entry_widgets[i], LV_OBJ_FLAG_HIDDEN);
+    }
+    update_saved_visibility(g);
+
+    // "Start Navigation" only belongs to the entry pane -- on the saved
+    // pane the coordinate fields are empty, so ui_goto_parse() would
+    // refuse and the button would sit there looking live while doing
+    // nothing. Rows are tap-to-navigate instead. Cancel stays on both (it
+    // just goes Home) and widens to fill the row.
+    if (g->btn_start_wrap) {
+        if (saved) lv_obj_add_flag(g->btn_start_wrap, LV_OBJ_FLAG_HIDDEN);
+        else       lv_obj_remove_flag(g->btn_start_wrap, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    // Selected tab is a filled blue pill, the other is bare. Matches how
+    // refresh_fields() re-styles the lat/lon cards on focus.
+    lv_obj_set_style_bg_color(g->tab_entry, UI_C_BLUE_BTN, 0);
+    lv_obj_set_style_bg_opa(g->tab_entry, saved ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(g->tab_entry_label, saved ? UI_C_MUTED : UI_C_TEXT, 0);
+    lv_obj_set_style_text_font(g->tab_entry_label, saved ? ui_font.s : ui_font.semi_s, 0);
+
+    lv_obj_set_style_bg_color(g->tab_saved, UI_C_BLUE_BTN, 0);
+    lv_obj_set_style_bg_opa(g->tab_saved, saved ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+    lv_obj_set_style_text_color(g->tab_saved_label, saved ? UI_C_TEXT : UI_C_MUTED, 0);
+    lv_obj_set_style_text_font(g->tab_saved_label, saved ? ui_font.semi_s : ui_font.s, 0);
+}
+
+void ui_goto_set_saved_cbs(ui_goto_t *g, void (*go_cb)(int), void (*del_cb)(int))
+{
+    LV_UNUSED(g);
+    s_saved_go_cb  = go_cb;
+    s_saved_del_cb = del_cb;
+}
+
+static void saved_row_cb(lv_event_t *e)
+{
+    if (s_saved_go_cb) s_saved_go_cb((int)(lv_uintptr_t)lv_event_get_user_data(e));
+}
+
+static void saved_del_cb(lv_event_t *e)
+{
+    if (s_saved_del_cb) s_saved_del_cb((int)(lv_uintptr_t)lv_event_get_user_data(e));
+}
+
+void ui_goto_saved_begin(ui_goto_t *g)
+{
+    if (g) lv_obj_clean(g->saved_list);
+}
+
+void ui_goto_saved_add(ui_goto_t *g, int index, const char *name, const char *meta)
+{
+    if (!g || !name) return;
+
+    // Explicit height, never LV_SIZE_CONTENT: a size-to-content flex row
+    // inside a fixed/bounded parent is the arrangement that silently
+    // mispositions and clips in this app (it's what hid the whole status
+    // bar on four screens), and fixed rows also make the scroll extent
+    // predictable.
+    lv_obj_t *row = ui_card(g->saved_list);
+    lv_obj_set_size(row, LV_PCT(100), 88);
+    lv_obj_set_style_pad_hor(row, 16, 0);
+    lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(row, saved_row_cb, LV_EVENT_CLICKED, (void *)(lv_uintptr_t)index);
+    ui_flex_row(row, 12);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t *left = ui_box(row);
+    // Stripped so the row underneath keeps the tap: hit-testing picks the
+    // DEEPEST clickable object, and ui_box() leaves CLICKABLE set. (Labels
+    // are safe -- lv_label's own constructor removes the flag.)
+    lv_obj_remove_flag(left, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(left, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_grow(left, 1);
+    ui_flex_col(left, 2);
+    ui_label(left, name, ui_font.semi_s, UI_C_TEXT);
+    if (meta) ui_label(left, meta, ui_font.xs, UI_C_MUTED);
+
+    // Keeps CLICKABLE on purpose -- being deeper than the row, it wins the
+    // hit test, so trash taps never fall through to "navigate here".
+    lv_obj_t *del = ui_box(row);
+    lv_obj_set_size(del, 60, 60);
+    lv_obj_set_style_radius(del, 12, 0);
+    lv_obj_set_style_bg_color(del, UI_C_CARD_ALT, 0);
+    lv_obj_set_style_bg_opa(del, LV_OPA_COVER, 0);
+    lv_obj_add_event_cb(del, saved_del_cb, LV_EVENT_CLICKED, (void *)(lv_uintptr_t)index);
+    lv_obj_t *dl = ui_label(del, LV_SYMBOL_TRASH, ui_font.s, UI_C_RED);
+    lv_obj_center(dl);
+}
+
+void ui_goto_saved_end(ui_goto_t *g)
+{
+    if (!g) return;
+    update_saved_visibility(g);
+}
 
 void ui_goto_set_format(ui_goto_t *g, ui_coord_fmt_t fmt)
 {
@@ -277,12 +459,15 @@ void ui_goto_set_coords(ui_goto_t *g, const char *lat, const char *lon)
     refresh_fields(g);
 }
 
-void ui_goto_set_recent(ui_goto_t *g, const char *name, float dist_mi, int brg)
+void ui_goto_set_recent(ui_goto_t *g, const char *name, const char *meta)
 {
     if (!g) return;
-    if (name) lv_label_set_text(g->recent_name, name);
-    lv_label_set_text_fmt(g->recent_meta, "last used | %.1f mi | %03d\xC2\xB0",
-                          dist_mi, ((brg % 360) + 360) % 360);
+    g->has_recent = (name != NULL);
+    if (name) {
+        lv_label_set_text(g->recent_name, name);
+        lv_label_set_text(g->recent_meta, meta ? meta : "");
+    }
+    update_saved_visibility(g);
 }
 
 const char *ui_goto_get_lat(ui_goto_t *g) { return g ? g->lat_buf : ""; }
