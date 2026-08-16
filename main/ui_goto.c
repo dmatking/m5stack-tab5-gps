@@ -375,9 +375,84 @@ static void saved_row_cb(lv_event_t *e)
     if (s_saved_go_cb) s_saved_go_cb((int)(lv_uintptr_t)lv_event_get_user_data(e));
 }
 
-static void saved_del_cb(lv_event_t *e)
+/* Delete confirmation -- same scrim+card pattern as Home's Reset Trip
+ * dialog (ui_home.c:108-191), reproduced here rather than shared because
+ * it's a small, self-contained bit of UI with no obvious common home yet.
+ * Only one can ever be open at a time (only a trash tap opens it), so
+ * file-static state is enough. The actual store mutation stays out of this
+ * file -- see del_confirm_yes_cb(), same layering as saved_row_cb above. */
+static lv_obj_t *s_del_confirm;
+static int       s_del_pending_index;
+
+static void del_confirm_close(void)
 {
-    if (s_saved_del_cb) s_saved_del_cb((int)(lv_uintptr_t)lv_event_get_user_data(e));
+    if (s_del_confirm) {
+        lv_obj_delete(s_del_confirm);
+        s_del_confirm = NULL;
+    }
+}
+
+static void del_confirm_no_cb(lv_event_t *e)
+{
+    (void)e;
+    del_confirm_close();
+}
+
+static void del_confirm_yes_cb(lv_event_t *e)
+{
+    (void)e;
+    int index = s_del_pending_index;
+    del_confirm_close();
+    if (s_saved_del_cb) s_saved_del_cb(index);
+}
+
+static void del_btn_cb(lv_event_t *e)
+{
+    ui_goto_t *g = &s_goto;
+    if (s_del_confirm) return; // already open
+    s_del_pending_index = (int)(lv_uintptr_t)lv_event_get_user_data(e);
+
+    // FLOATING here is load-bearing, same reason as ui_home.c's reset
+    // dialog: g->screen lays out body+navbar in a flex column, so without
+    // it this scrim would become a 3rd flex item after the navbar instead
+    // of covering it.
+    lv_obj_t *scrim = ui_box(g->screen);
+    lv_obj_add_flag(scrim, LV_OBJ_FLAG_FLOATING);
+    lv_obj_set_pos(scrim, 0, 0);
+    lv_obj_set_size(scrim, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(scrim, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(scrim, LV_OPA_60, 0);
+    lv_obj_add_flag(scrim, LV_OBJ_FLAG_CLICKABLE);
+    s_del_confirm = scrim;
+
+    lv_obj_t *card = ui_card(scrim);
+    lv_obj_set_width(card, LV_PCT(80));
+    lv_obj_set_height(card, LV_SIZE_CONTENT);
+    lv_obj_center(card);
+    lv_obj_set_style_pad_all(card, 20, 0);
+    ui_flex_col(card, 16);
+    lv_obj_set_flex_align(card, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+
+    ui_label(card, "Delete this waypoint?", ui_font.semi_m, UI_C_TEXT);
+    lv_obj_t *desc = ui_label(card, "This can't be undone.", ui_font.s, UI_C_MUTED);
+    lv_obj_set_width(desc, LV_PCT(100));
+    lv_label_set_long_mode(desc, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_align(desc, LV_TEXT_ALIGN_CENTER, 0);
+
+    lv_obj_t *btns = ui_box(card);
+    lv_obj_set_size(btns, LV_PCT(100), LV_SIZE_CONTENT);
+    ui_flex_row(btns, 12);
+    lv_obj_t *bl = ui_box(btns);
+    lv_obj_set_size(bl, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_grow(bl, 1);
+    lv_obj_t *no_btn = ui_button(bl, "Cancel", UI_C_CARD, UI_C_MUTED, true, UI_C_BORDER, 64);
+    lv_obj_add_event_cb(no_btn, del_confirm_no_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *br = ui_box(btns);
+    lv_obj_set_size(br, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_grow(br, 1);
+    lv_obj_t *yes_btn = ui_button(br, "Delete", UI_C_CARD, UI_C_RED, true, lv_color_hex(0x63303A), 64);
+    lv_obj_add_event_cb(yes_btn, del_confirm_yes_cb, LV_EVENT_CLICKED, NULL);
 }
 
 void ui_goto_saved_begin(ui_goto_t *g)
@@ -421,7 +496,7 @@ void ui_goto_saved_add(ui_goto_t *g, int index, const char *name, const char *me
     lv_obj_set_style_radius(del, 12, 0);
     lv_obj_set_style_bg_color(del, UI_C_CARD_ALT, 0);
     lv_obj_set_style_bg_opa(del, LV_OPA_COVER, 0);
-    lv_obj_add_event_cb(del, saved_del_cb, LV_EVENT_CLICKED, (void *)(lv_uintptr_t)index);
+    lv_obj_add_event_cb(del, del_btn_cb, LV_EVENT_CLICKED, (void *)(lv_uintptr_t)index);
     lv_obj_t *dl = ui_label(del, LV_SYMBOL_TRASH, ui_font.s, UI_C_RED);
     lv_obj_center(dl);
 }

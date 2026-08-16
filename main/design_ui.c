@@ -104,6 +104,18 @@ static void saved_go_cb(int index)
     start_nav_to(w.lat, w.lon, w.name);
 }
 
+// Fires after ui_goto.c's own confirm dialog has already gotten a "yes" --
+// this function only ever does the actual store mutation. Refresh
+// afterward is required, not just tidy: the row callbacks carry a list
+// index, and every index at or after the deleted one just shifted down
+// one (waypoints_delete()'s remove-and-compact), so a stale list would
+// send the next tap to the wrong waypoint.
+static void saved_del_cb(int index)
+{
+    waypoints_delete(index);
+    ui_goto_refresh_saved();
+}
+
 // Settings screen's "24-hour time" switch -- real (persisted, see
 // app_settings.h). gps_ui_bridge.c re-formats every displayed clock on its
 // own next tick, so there's no need to push a "settings changed"
@@ -189,9 +201,7 @@ void ui_init(void)
     ui_nav_set_buttons(s_nav_p, nav_map_cb, nav_stop_cb);
     ui_goto_set_start_cb(s_goto_p, goto_start_cb, NULL);
     ui_goto_set_cancel_cb(s_goto_p, goto_cancel_cb, NULL);
-    // Delete wiring lands in the next commit; NULL until then, which
-    // ui_goto.c treats as "trash button does nothing".
-    ui_goto_set_saved_cbs(s_goto_p, saved_go_cb, NULL);
+    ui_goto_set_saved_cbs(s_goto_p, saved_go_cb, saved_del_cb);
     ui_goto_refresh_saved();
 
     // Sync each switch/slider to its real persisted value -- ui_settings_create()
