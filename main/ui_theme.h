@@ -151,8 +151,11 @@ lv_obj_t *ui_divider(lv_obj_t *parent);
  * spin the value text (a rotating needle needs an image — see README). */
 lv_obj_t *ui_compass(lv_obj_t *parent, lv_coord_t size,
                      lv_obj_t **out_value, lv_obj_t **out_sub);
+// valid == false shows "---"/"--" instead of a number: GPS course-over-
+// ground is meaningless standing still (see gps.h's heading_valid), and a
+// stale compass reading is worse than an obviously-absent one.
 void ui_compass_set_heading(lv_obj_t *value_label, lv_obj_t *sub_label,
-                            int deg, const char *cardinal);
+                            int deg, const char *cardinal, bool valid);
 
 /* Small round clock-face icon (circle outline + two hands, hands pointing
  * to 12 and 3 -- purely decorative, doesn't track real time). LVGL's stock

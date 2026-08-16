@@ -80,6 +80,19 @@
 #define MAP_HOME_BG_ACTIVE_RGB565  MAP_THEME_BLUE_RGB565  // highlight while follow mode is on
 #define MAP_HOME_GLYPH_RGB565      0xFFFF  // white
 
+// "You are here" marker -- a filled dot with a contrasting ring, drawn at
+// the current GPS fix's projected screen position every redraw (see
+// main/ui_overlay.c's ui_overlay_draw_position_marker(), called from
+// main/map_view.c). Before this existed, following/recentering on your
+// position was the only feedback that the map even knew where you were --
+// nothing on screen actually marked the spot. Same blue-fill/white-ring
+// combo as the classic "blue dot" convention (Google Maps etc.) -- reads
+// against both light and dark tile colors underneath.
+#define MAP_POS_MARKER_RADIUS         12  // px, outer radius
+#define MAP_POS_MARKER_RING_THICKNESS 3   // px
+#define MAP_POS_MARKER_FILL_RGB565    MAP_THEME_BLUE_RGB565
+#define MAP_POS_MARKER_RING_RGB565    0xFFFF  // white
+
 // Tile cache: worst-case on-screen tiles for a 1280x720 logical viewport at
 // 256px tiles is 6 cols x 4 rows = 24 (same total either orientation, just
 // swapped axes). With adjacent-zoom-level prefetch (see tile_cache.c), up to

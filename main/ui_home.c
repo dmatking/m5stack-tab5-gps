@@ -79,6 +79,32 @@ static void track_btn_cb(lv_event_t *e)
     ui_home_set_tracking(h, !h->tracking);
 }
 
+/* Mark Position. The handler lives outside this file (it needs live GPS,
+ * which only gps_ui_bridge.c has) -- this just forwards, same split as
+ * ui_home_set_reset_trip_cb(). */
+static void (*s_mark_cb)(void);
+
+static void mark_btn_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    if (s_mark_cb) s_mark_cb();
+}
+
+/* Feedback without a toast system: swap the button's own label for a
+ * moment, then put it back. Same trick ui_home_set_tracking() already uses
+ * to flip Start/Stop Tracking, and a one-shot lv_timer (as in ui_shell.c's
+ * idle timer) to restore it. The handle is kept so a second tap restarts
+ * the window instead of the first timer firing mid-way through the second
+ * message. */
+static lv_timer_t *s_mark_restore_timer;
+
+static void mark_restore_cb(lv_timer_t *t)
+{
+    ui_home_t *h = (ui_home_t *)lv_timer_get_user_data(t);
+    if (h && h->mark_btn_label) lv_label_set_text(h->mark_btn_label, "Mark Position");
+    s_mark_restore_timer = NULL;   // LVGL auto-deletes a repeat_count(1) timer
+}
+
 /* Reset Trip confirm dialog -- a scrim + small card, built fresh on demand
  * and torn down on either button rather than pre-built/hidden. Only one can
  * ever be open at a time (the Reset Trip button is the only thing that
@@ -318,10 +344,34 @@ ui_home_t *ui_home_create(lv_event_cb_t tab_cb)
     trip_cell(cells, "SPEED\nMAX",  "68.3",    "mph",   true,  false, &h->trip_max, &h->trip_max_unit);
     trip_cell(cells, "ELEV\nGAIN",  "512",     "ft",    true,  false, &h->trip_gain, &h->trip_gain_unit);
 
-    /* Below the card, not inside it -- same footprint as Start Tracking
-     * below, just a secondary/destructive action (outline + red, matching
-     * ui_nav.c's "Stop Nav" button) rather than the primary blue fill. */
-    lv_obj_t *reset_btn = ui_button(body, "Reset Trip", UI_C_CARD, UI_C_RED,
+    /* Below the card, not inside it. Two secondary actions sharing the row
+     * Reset Trip used to have to itself -- same vertical band, same 64px
+     * height, so this screen's spacer/flex_grow budget is unchanged. Split
+     * with the two-flex_grow-wrapper idiom used by ui_nav.c's and
+     * ui_goto.c's footers.
+     *
+     * Mark Position lives here rather than on Goto because Goto is
+     * unreachable while navigating -- ui_show_tab(UI_TAB_NAV) resolves to
+     * the Nav screen once s_navigating is set (design_ui.c), and "mark
+     * where I am" is exactly what you want mid-trip. Home also already
+     * shows CURRENT POSITION directly above, so the button needs no
+     * explanation. */
+    lv_obj_t *act_row = ui_box(body);
+    lv_obj_set_size(act_row, LV_PCT(100), LV_SIZE_CONTENT);
+    ui_flex_row(act_row, 12);
+
+    lv_obj_t *act_l = ui_box(act_row);
+    lv_obj_set_size(act_l, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_grow(act_l, 1);
+    h->mark_btn = ui_button(act_l, "Mark Position", UI_C_CARD, UI_C_BLUE,
+                            true, UI_C_BLUE, 64);
+    h->mark_btn_label = lv_obj_get_child(h->mark_btn, 0);
+    lv_obj_add_event_cb(h->mark_btn, mark_btn_cb, LV_EVENT_CLICKED, h);
+
+    lv_obj_t *act_r = ui_box(act_row);
+    lv_obj_set_size(act_r, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_grow(act_r, 1);
+    lv_obj_t *reset_btn = ui_button(act_r, "Reset Trip", UI_C_CARD, UI_C_RED,
                                     true, lv_color_hex(0x63303A), 64);
     lv_obj_add_event_cb(reset_btn, reset_trip_btn_cb, LV_EVENT_CLICKED, h);
 
@@ -371,9 +421,9 @@ void ui_home_set_speed(ui_home_t *h, float speed, const char *unit)
     if (unit) lv_label_set_text(h->speed_unit, unit);
 }
 
-void ui_home_set_heading(ui_home_t *h, int deg, const char *cardinal)
+void ui_home_set_heading(ui_home_t *h, int deg, const char *cardinal, bool valid)
 {
-    if (h) ui_compass_set_heading(h->heading_val, h->heading_sub, deg, cardinal);
+    if (h) ui_compass_set_heading(h->heading_val, h->heading_sub, deg, cardinal, valid);
 }
 
 void ui_home_set_altitude(ui_home_t *h, int altitude, const char *unit)
@@ -424,6 +474,21 @@ void ui_home_set_trip(ui_home_t *h, float distance, const char *moving,
     }
     lv_label_set_text_fmt(h->trip_gain, "%d", gain);
     if (elev_unit) lv_label_set_text(h->trip_gain_unit, elev_unit);
+}
+
+void ui_home_set_mark_cb(ui_home_t *h, void (*cb)(void))
+{
+    LV_UNUSED(h);
+    s_mark_cb = cb;
+}
+
+void ui_home_flash_mark(ui_home_t *h, const char *text)
+{
+    if (!h || !h->mark_btn_label || !text) return;
+    lv_label_set_text(h->mark_btn_label, text);
+    if (s_mark_restore_timer) lv_timer_delete(s_mark_restore_timer);
+    s_mark_restore_timer = lv_timer_create(mark_restore_cb, 1800, h);
+    lv_timer_set_repeat_count(s_mark_restore_timer, 1);
 }
 
 void ui_home_set_tracking(ui_home_t *h, bool on)

@@ -13,3 +13,15 @@ ota_1,    app,  ota_1,     0x220000, 2M,
 # ~1.84M needed) keeps the offset round and leaves headroom if the screen
 # ever grows.
 snapshot, data, undefined, 0x420000, 2M,
+# Saved waypoints (main/waypoints.c). A *second* NVS partition rather than
+# more keys in `nvs` above, for two reasons: `nvs` is only 24KB and shared
+# with every app setting, and a waypoint-store reformat must never be able
+# to take the user's settings with it. Appended into previously-unallocated
+# flash (snapshot ends exactly here, and ~9.9MB is free beyond this), so no
+# existing partition offset moves and a plain `idf.py flash` -- which only
+# writes the bootloader, the table at 0x8000, and the app -- leaves the
+# settings in `nvs` at 0x9000 untouched. NOTE: this region is NOT blank; it
+# was inside the old 14MB `tiledata` partition (removed in b201d4f) and had
+# real tile data written to it, so expect nvs_flash_init_partition() to
+# fail once on the first boot after this and take the erase-and-retry path.
+waypoints, data, nvs,      0x620000, 64K,

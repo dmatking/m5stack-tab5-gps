@@ -22,6 +22,7 @@
 #include "ui_overlay.h"
 #include "ui_shell.h"
 #include "usb_msc.h"
+#include "waypoints.h"
 
 static const char *TAG = "APP";
 
@@ -59,6 +60,7 @@ void app_main(void)
     ESP_LOGI(TAG, "app_main starting");
     board_init();
     app_settings_init(); // before ui_shell_start() -- the Settings screen needs real persisted values at creation time
+    waypoints_init();    // own NVS partition, see main/waypoints.c -- before ui_shell_start() for the same reason (Goto's saved list is built at creation time)
 
 #ifdef APP_USB_MSC_MODE
     // One-off dev-tool build: expose the SD card as a USB drive and stop --

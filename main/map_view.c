@@ -362,6 +362,24 @@ static void map_task(void *arg)
         was_pressed = pressed;
 
         if (tile_cache_render_viewport(pan_x, pan_y, zoom, dragging)) {
+            // "You are here" marker -- drawn first so the buttons/status
+            // bar/navbar overlays below always paint on top of it in the
+            // rare case a manually-panned view puts your position under
+            // one of them (they're also independently safe either way --
+            // buttons never move, and the marker itself is clipped out of
+            // the status/navbar rows, see ui_overlay_draw_position_marker()).
+            // Projected at the *current* zoom/pan, same math the continuous-
+            // follow block above already uses to keep the view centered.
+            bool marker_valid = cur_gps_state.latlon_valid && gps_has_fix();
+            if (marker_valid) {
+                int32_t gx, gy;
+                lonlat_to_world_px(cur_gps_state.latitude_deg, cur_gps_state.longitude_deg,
+                                    zoom, &gx, &gy);
+                ui_overlay_draw_position_marker((int)(gx - pan_x), (int)(gy - pan_y), true);
+            } else {
+                ui_overlay_draw_position_marker(0, 0, false);
+            }
+
             ui_overlay_draw_zoom_buttons();
             ui_overlay_draw_home_button(follow_gps);
             ui_overlay_draw_gps_status(zoom);

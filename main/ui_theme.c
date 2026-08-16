@@ -166,10 +166,15 @@ lv_obj_t *ui_compass(lv_obj_t *parent, lv_coord_t size,
 }
 
 void ui_compass_set_heading(lv_obj_t *value_label, lv_obj_t *sub_label,
-                            int deg, const char *cardinal)
+                            int deg, const char *cardinal, bool valid)
 {
-    if (value_label) lv_label_set_text_fmt(value_label, "%03d", deg);
-    if (sub_label && cardinal) lv_label_set_text(sub_label, cardinal);
+    if (value_label) {
+        if (valid) lv_label_set_text_fmt(value_label, "%03d", deg);
+        else       lv_label_set_text(value_label, "---");
+    }
+    if (sub_label) {
+        lv_label_set_text(sub_label, (valid && cardinal) ? cardinal : "--");
+    }
 }
 
 lv_obj_t *ui_clock_icon(lv_obj_t *parent, lv_coord_t size, lv_color_t color)

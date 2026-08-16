@@ -18,6 +18,8 @@
 #include "design_ui.h"
 #include "gps.h"
 #include "sd_card.h"
+#include "trip_store.h"
+#include "waypoints.h"
 
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
@@ -266,11 +268,30 @@ static float bearing_deg(double lat1, double lon1, double lat2, double lon2)
     return (float)fmod(theta + 360.0, 360.0);
 }
 
+// Cross-track error, statute miles: how far the current position (3) is
+// off the direct great-circle course from the leg's origin (1) to its
+// destination (2). Positive = right of course, negative = left -- matches
+// ui_nav_set_cross_track()'s offset convention directly, no sign flip
+// needed at the call site. Standard cross-track-distance formula, reusing
+// haversine_miles()/bearing_deg() above rather than a separate trig path:
+//   XTE = asin(sin(d13/R) * sin(theta13 - theta12)) * R
+static float cross_track_miles(double olat, double olon, double dlat, double dlon,
+                                double plat, double plon)
+{
+    const double r_mi = 3958.8;
+    double d13     = (double)haversine_miles(olat, olon, plat, plon);
+    double theta13 = (double)bearing_deg(olat, olon, plat, plon) * (GPS_UI_PI / 180.0);
+    double theta12 = (double)bearing_deg(olat, olon, dlat, dlon) * (GPS_UI_PI / 180.0);
+    return (float)(asin(sin(d13 / r_mi) * sin(theta13 - theta12)) * r_mi);
+}
+
 // Telemetry's (and now Home's, see ui_home_set_trip() below) trip/max-speed/
-// moving-time/elevation-gain accumulator. Session-only until
-// gps_ui_bridge_reset_trip() is called (wired to Home's Reset Trip button,
-// see ui_home_set_reset_trip_cb()) -- otherwise these just climb from zero
-// at boot for as long as the app runs. Distance/moving-time/elevation-gain
+// moving-time/elevation-gain accumulator. Persisted now (main/trip_store.h)
+// rather than purely session-only -- gps_ui_bridge_reset_trip() (wired to
+// Home's Reset Trip button, see ui_home_set_reset_trip_cb()) still zeroes
+// it on demand, but a plain power cycle no longer does the same thing by
+// accident (a real trip lost to a hard power-off outdoors, not a reset
+// button, is what motivated this). Distance/moving-time/elevation-gain
 // only accrue above MOVING_MPH_THRESHOLD, to keep GPS position/altitude
 // jitter while parked from slowly inflating the trip odometer.
 #define MOVING_MPH_THRESHOLD 1.15f  // ~1 knot
@@ -281,6 +302,16 @@ static float  s_trip_miles;
 static float  s_max_mph;
 static uint32_t s_moving_ticks;
 static float  s_elev_gain_ft;
+
+// Persistence for the four totals above -- deliberately NOT saved every
+// tick (2Hz over a multi-hour drive is 7000+ NVS writes/hour for no
+// benefit, real flash wear for a total nobody's reading that often).
+// s_trip_save_tick throttles to roughly once every TRIP_SAVE_TICKS ticks;
+// s_trip_last_saved is compared against the current totals so a save is
+// skipped entirely while parked/no-fix and nothing's actually changed.
+#define TRIP_SAVE_TICKS (30000 / TICK_PERIOD_MS)  // ~30s
+static int          s_trip_save_tick;
+static trip_totals_t s_trip_last_saved;
 
 // Vertical speed (fpm) from consecutive altitude readings, 500ms apart --
 // noisy on its own (GPS altitude jitter amplified ~120x by the short
@@ -301,6 +332,28 @@ static float s_vspeed_fpm_ema;
 static int  s_battery_tick;
 static bool s_battery_have;
 static int  s_battery_pct;
+
+// Cross-track's leg origin -- the position navigation *started* from,
+// which is what defines the course line XTE is measured against. Armed on
+// the ui_is_navigating() false->true edge and latched on the first tick
+// with a valid fix after that, since there may not be one at the exact
+// moment "Start Navigation" is tapped. Cleared implicitly by the next arm
+// (s_leg_have goes false again), not on Stop -- Stop just leaves the Nav
+// screen showing whatever it last showed, same as every other card here.
+static bool   s_was_navigating;
+static bool   s_leg_armed;
+static bool   s_leg_have;
+static double s_leg_lat, s_leg_lon;
+
+// Smooths "closing"/"opening" (is |XTE| trending back toward the course
+// line) against 2Hz GPS jitter -- compares this tick's |XTE| to last
+// tick's with a small dead-band, holding the previous verdict inside the
+// dead-band rather than flipping on noise. Reset alongside the leg origin
+// so a brand new leg doesn't compare against the previous one's stale
+// magnitude.
+static bool  s_xte_have_prev;
+static float s_xte_prev_abs;
+static bool  s_xte_closing;
 
 // Every field in the status bar is a global value -- fix state, sat count,
 // local time, battery -- none of it is screen-specific, so every screen's
@@ -342,6 +395,16 @@ static void tick(void)
         s_battery_tick = 0;
         s_battery_have = battery_get_percent(&s_battery_pct);
     }
+
+    // Cross-track leg-origin arming -- see s_leg_armed's own comment. Runs
+    // every tick regardless of fix state, so the false->true edge is never
+    // missed even if navigation starts with no fix yet.
+    bool navigating_now = ui_is_navigating();
+    if (navigating_now && !s_was_navigating) {
+        s_leg_armed = true;
+        s_leg_have  = false;
+    }
+    s_was_navigating = navigating_now;
 
     if (!lvgl_port_lock(50)) return;
 
@@ -404,11 +467,11 @@ static void tick(void)
         ui_home_set_speed(h, conv_speed_mph(mph, dist_km), speed_unit_str(dist_km));
     }
 
-    // heading_deg comes from RMC and is only meaningful in motion -- GPS
-    // course-over-ground is noisy/undefined near zero speed. Shown
-    // regardless for now (matches gps.c not gating it either); revisit if
-    // it looks jittery standing still once there's a real heading to look at.
-    ui_home_set_heading(h, (int)(st.heading_deg + 0.5f), cardinal_8(st.heading_deg));
+    // Gated on heading_valid (gps.h) rather than shown unconditionally --
+    // GPS course-over-ground is noise at rest, so the compass now reads
+    // "---" standing still instead of a confident stale bearing.
+    ui_home_set_heading(h, (int)(st.heading_deg + 0.5f),
+                        cardinal_8(st.heading_deg), st.heading_valid);
 
     if (st.altitude_valid) {
         float alt_ft = st.altitude_m * 3.28084f;
@@ -604,52 +667,131 @@ static void tick(void)
     // ---- Nav screen (active navigation) ------------------------------------
     // Goto/Nav went from decorative to real (see design_ui.c's goto_start_cb(),
     // which wires ui_goto_parse() into ui_set_destination()) -- distance/
-    // bearing/closure/ETA computed fresh every tick from the live position
-    // and whatever destination was set when "Start Navigation" was tapped.
-    // Cross-track (how far off the direct course line) deliberately NOT
-    // computed -- would need storing the position navigation started from
-    // to define that line, separate state this doesn't have yet;
-    // ui_nav_create()'s own demo value is left alone rather than faked with
-    // a real-looking number that isn't.
+    // bearing/closure/ETA/cross-track computed fresh every tick from the
+    // live position, whatever destination was set when "Start Navigation"
+    // was tapped, and (for cross-track) the leg origin latched above.
     ui_nav_t *nav_ui = nav_status_ui;   // status bar already fed above
     double dest_lat, dest_lon;
-    if (nav_ui && ui_is_navigating() && st.latlon_valid &&
-        ui_get_destination(&dest_lat, &dest_lon)) {
+    // Gated on `fix`, not just latlon_valid -- the latter is sticky in
+    // gps.c (set on the first good sentence, never cleared), so on its own
+    // it would keep this whole block computing confident distances and
+    // bearings from a stale position long after signal was lost, directly
+    // under a status bar reading NO FIX.
+    bool nav_active = nav_ui && ui_is_navigating() &&
+                      ui_get_destination(&dest_lat, &dest_lon);
+    if (nav_active && (!fix || !st.latlon_valid)) {
+        ui_nav_set_stale(nav_ui);
+    } else if (nav_active) {
+        // Latch the cross-track leg origin on the first valid fix after
+        // arming (see s_leg_armed's own comment) -- exactly here, not
+        // earlier, because this is the first point in the tick where a
+        // fix AND a destination are both known to be good.
+        if (s_leg_armed) {
+            s_leg_lat = st.latitude_deg;
+            s_leg_lon = st.longitude_deg;
+            s_leg_have = true;
+            s_leg_armed = false;
+            s_xte_have_prev = false;
+            s_xte_closing = true;
+        }
+
         float dist_mi = haversine_miles(st.latitude_deg, st.longitude_deg, dest_lat, dest_lon);
         float brg = bearing_deg(st.latitude_deg, st.longitude_deg, dest_lat, dest_lon);
         int heading = (int)(st.heading_deg + 0.5f);
         float nav_speed_mph = st.speed_valid ? st.speed_knots * 1.15078f : 0.0f;
 
-        ui_nav_set_bearing(nav_ui, (int)(brg + 0.5f), heading);
+        ui_nav_set_bearing(nav_ui, (int)(brg + 0.5f), heading, st.heading_valid);
         ui_nav_set_distance(nav_ui, conv_dist_mi(dist_mi, dist_km), dist_unit_str(dist_km));
         ui_nav_set_speed(nav_ui, conv_speed_mph(nav_speed_mph, dist_km), speed_unit_str(dist_km));
 
         // Velocity made good -- current speed projected onto the bearing
         // to the destination, so it reads near-zero/negative when moving
         // across or away from it instead of always showing full raw speed
-        // regardless of direction actually traveled.
-        float angle_diff = (float)((brg - heading) * (GPS_UI_PI / 180.0));
-        float vmg_mph = nav_speed_mph * cosf(angle_diff);
-        ui_nav_set_closure(nav_ui, conv_speed_mph(vmg_mph, dist_km), speed_unit_str(dist_km));
+        // regardless of direction actually traveled. Only computable with a
+        // real heading to project onto (gps.h's heading_valid): without one
+        // the cosine term is meaningless, and it feeds ETA/time-to-go too,
+        // so all three blank together rather than propagating the garbage.
+        bool vmg_valid = st.heading_valid && st.speed_valid;
+        float vmg_mph = 0.0f;
+        if (vmg_valid) {
+            float angle_diff = (float)((brg - heading) * (GPS_UI_PI / 180.0));
+            vmg_mph = nav_speed_mph * cosf(angle_diff);
+            ui_nav_set_closure(nav_ui, conv_speed_mph(vmg_mph, dist_km), speed_unit_str(dist_km));
+        } else {
+            ui_nav_set_closure_unknown(nav_ui);
+        }
 
-        if (vmg_mph > 0.5f) {
+        if (vmg_valid && vmg_mph > 0.5f) {
             float hours_to_go = dist_mi / vmg_mph;
-            uint32_t secs_to_go = (uint32_t)(hours_to_go * 3600.0f);
             char time_to_go[16];
-            snprintf(time_to_go, sizeof(time_to_go), "%u:%02u",
-                     (unsigned)(secs_to_go / 3600), (unsigned)((secs_to_go % 3600) / 60));
             char eta_text[16] = "--:--";
-            if (have_local) {
-                // Simple minutes-of-day add-and-wrap, same spirit as this
-                // file's other clock math -- fine for a same-day ETA
-                // display, not a real calendar-aware add.
-                int total_min = local_tm.tm_hour * 60 + local_tm.tm_min + (int)(hours_to_go * 60.0f);
-                total_min = ((total_min % 1440) + 1440) % 1440;
-                snprintf(eta_text, sizeof(eta_text), "%d:%02d", total_min / 60, total_min % 60);
+            // Past a day, BOTH of these stop meaning anything, so they
+            // degrade together rather than one of them quietly lying:
+            // time-to-go overflows a card laid out for "17:56" once the
+            // hour count goes 3 digits, and the ETA below is a same-day
+            // minutes-of-day wrap, so a 30-hour leg would render as a
+            // perfectly plausible time *today*.
+            //
+            // Written !(x < 24) rather than (x >= 24) deliberately: a NaN
+            // from a degenerate leg fails every comparison, so this form
+            // sends it down the ">24h" branch instead of letting it reach
+            // the cast below (float->uint32_t of a NaN is undefined).
+            if (!(hours_to_go < 24.0f)) {
+                lv_strlcpy(time_to_go, "> 24h", sizeof(time_to_go));
+            } else {
+                uint32_t secs_to_go = (uint32_t)(hours_to_go * 3600.0f);
+                snprintf(time_to_go, sizeof(time_to_go), "%u:%02u",
+                         (unsigned)(secs_to_go / 3600), (unsigned)((secs_to_go % 3600) / 60));
+                if (have_local) {
+                    // Simple minutes-of-day add-and-wrap, same spirit as
+                    // this file's other clock math -- fine for a same-day
+                    // ETA, not a real calendar-aware add (which is exactly
+                    // why the >=24h case above skips it). Formatted through
+                    // format_clock() so it honours the 12/24-hour setting
+                    // like every other clock in the app; it used to be a
+                    // bare "%d:%02d", the one holdout.
+                    int total_min = local_tm.tm_hour * 60 + local_tm.tm_min +
+                                    (int)(hours_to_go * 60.0f);
+                    total_min = ((total_min % 1440) + 1440) % 1440;
+                    format_clock(eta_text, sizeof(eta_text),
+                                 total_min / 60, total_min % 60, 0, false);
+                }
             }
             ui_nav_set_eta(nav_ui, eta_text, time_to_go);
         } else {
             ui_nav_set_eta(nav_ui, "--:--", "--:--");
+        }
+
+        // Cross track -- needs the leg origin latched above in addition to
+        // the live fix and destination already required by nav_active.
+        // The degenerate origin==destination check guards a leg that
+        // latched while already standing on the destination: bearing_deg()
+        // returns a defined-but-meaningless 0 deg for that (atan2(0,0)),
+        // and there's no course line to be off of in the first place.
+        bool xte_ready = s_leg_have &&
+                         (s_leg_lat != dest_lat || s_leg_lon != dest_lon);
+        if (xte_ready) {
+            float xte_mi = cross_track_miles(s_leg_lat, s_leg_lon, dest_lat, dest_lon,
+                                             st.latitude_deg, st.longitude_deg);
+            float xte_abs = xte_mi < 0.0f ? -xte_mi : xte_mi;
+
+            const float deadband_mi = 0.005f;
+            if (s_xte_have_prev) {
+                float delta = xte_abs - s_xte_prev_abs;
+                if (delta > deadband_mi)       s_xte_closing = false;
+                else if (delta < -deadband_mi) s_xte_closing = true;
+                // else: inside the dead-band, hold the previous verdict.
+            }
+            s_xte_prev_abs = xte_abs;
+            s_xte_have_prev = true;
+
+            float full_scale_mi = 0.5f;
+            ui_nav_set_cross_track(nav_ui, conv_dist_mi(xte_mi, dist_km),
+                                   dist_unit_str(dist_km),
+                                   conv_dist_mi(full_scale_mi, dist_km),
+                                   s_xte_closing, true);
+        } else {
+            ui_nav_set_cross_track(nav_ui, 0.0f, dist_unit_str(dist_km), 0.5f, true, false);
         }
     }
 
@@ -742,6 +884,25 @@ static void tick(void)
     // bars are fed with everyone else's up at the top of this function.
 
     lvgl_port_unlock();
+
+    // Trip persistence -- deliberately outside the lvgl lock above: a real
+    // flash write (nvs_commit()) can take tens of ms, and there's no reason
+    // to hold LVGL's redraw hostage to that when these are plain statics
+    // this same task already owns exclusively. See TRIP_SAVE_TICKS' own
+    // comment for why this isn't done every tick.
+    if (++s_trip_save_tick >= TRIP_SAVE_TICKS) {
+        s_trip_save_tick = 0;
+        trip_totals_t now = {
+            .distance_mi  = s_trip_miles,
+            .max_mph      = s_max_mph,
+            .moving_s     = (uint32_t)(s_moving_ticks * (TICK_PERIOD_MS / 1000.0f)),
+            .elev_gain_ft = s_elev_gain_ft,
+        };
+        if (memcmp(&now, &s_trip_last_saved, sizeof(now)) != 0) {
+            trip_store_save(&now);
+            s_trip_last_saved = now;
+        }
+    }
 }
 
 // Zeroes the trip accumulator above -- wired to Home's Reset Trip button
@@ -750,6 +911,9 @@ static void tick(void)
 // Clears the have_prev_* flags too, not just the running totals -- otherwise
 // the very next tick would compute one huge bogus distance/elevation delta
 // against the stale pre-reset position/altitude instead of starting clean.
+// Also clears the persisted copy immediately, same as the in-RAM one --
+// waiting up to TRIP_SAVE_TICKS for the next periodic save would mean a
+// reset that doesn't survive a power cycle for the next half-minute.
 void gps_ui_bridge_reset_trip(void)
 {
     s_trip_miles = 0.0f;
@@ -758,6 +922,33 @@ void gps_ui_bridge_reset_trip(void)
     s_elev_gain_ft = 0.0f;
     s_have_prev_pos = false;
     s_have_prev_alt = false;
+    trip_store_clear();
+    s_trip_last_saved = (trip_totals_t){ 0 };
+    s_trip_save_tick = 0;
+}
+
+void gps_ui_bridge_mark_waypoint(void)
+{
+    // Runs on the LVGL task (LVGL's lock is held by the click dispatch) and
+    // takes gps.c's mutex inside gps_get_state(). tick() acquires the same
+    // two in the opposite order but never holds both -- gps_get_state()
+    // copies and releases well before lvgl_port_lock(). Don't "tidy"
+    // gps_get_state() into tick()'s locked section: that would close the
+    // gap into a real lock-order inversion.
+    gps_state_t st = gps_get_state();
+
+    const char *msg;
+    if (!gps_has_fix() || !st.latlon_valid) {
+        msg = "No GPS fix";
+    } else {
+        waypoint_t w;
+        switch (waypoints_add(st.latitude_deg, st.longitude_deg, &w)) {
+        case WAYPOINTS_OK:        msg = w.name;        break;
+        case WAYPOINTS_ERR_FULL:  msg = "Storage full"; break;
+        default:                  msg = "Save failed";  break;
+        }
+    }
+    ui_home_flash_mark(ui_home(), msg);
 }
 
 static void bridge_task(void *arg)
@@ -773,7 +964,26 @@ static void bridge_task(void *arg)
 void gps_ui_bridge_start(void)
 {
     ui_home_t *h = ui_home();
-    if (h) ui_home_set_reset_trip_cb(h, gps_ui_bridge_reset_trip);
+    if (h) {
+        ui_home_set_reset_trip_cb(h, gps_ui_bridge_reset_trip);
+        ui_home_set_mark_cb(h, gps_ui_bridge_mark_waypoint);
+    }
+
+    // Resume wherever the last session's trip left off, rather than
+    // starting every boot at zero -- see trip_store.h's own comment for
+    // why this exists. s_have_prev_pos/s_have_prev_alt stay false (their
+    // normal boot-time default): there's no previous *tick* to diff
+    // against yet, only a previously-saved running total to carry
+    // forward, so the first fresh position/altitude this session still
+    // starts its own delta cleanly instead of comparing against wherever
+    // the device was when it was last saved.
+    trip_totals_t saved;
+    trip_store_load(&saved);
+    s_trip_miles    = saved.distance_mi;
+    s_max_mph       = saved.max_mph;
+    s_moving_ticks  = (uint32_t)((uint64_t)saved.moving_s * 1000 / TICK_PERIOD_MS);
+    s_elev_gain_ft  = saved.elev_gain_ft;
+    s_trip_last_saved = saved;
 
     xTaskCreate(bridge_task, "gps_ui_bridge", 4096, NULL, 3, NULL);
 }

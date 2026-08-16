@@ -18,6 +18,7 @@
 
 #include "app_settings.h"
 #include "board_interface.h"
+#include "waypoints.h"
 
 #include <stdio.h>
 
@@ -42,11 +43,25 @@ static void tab_event_cb(lv_event_t *e)
 static void nav_map_cb(lv_event_t *e)  { LV_UNUSED(e); ui_show_tab(UI_TAB_MAP); }
 static void nav_stop_cb(lv_event_t *e) { LV_UNUSED(e); ui_set_navigating(false);
                                          ui_show_goto(); }
-// Parses whatever was typed into the Goto screen (ui_goto_parse() -- format-
-// aware, see its own comment) into a real destination, rather than the
-// screen transition alone this used to be. gps_ui_bridge.c's tick() picks
-// up ui_get_destination() from here on to compute real distance/bearing/
-// closure/ETA on the Nav screen every tick while ui_is_navigating().
+// Shared by both ways into navigation: typing coordinates, and tapping a
+// saved waypoint. `name` is what shows on Nav's DESTINATION card -- a
+// waypoint's own name when there is one, otherwise the generic label.
+// gps_ui_bridge.c's tick() picks up ui_get_destination() from here on to
+// compute real distance/bearing/closure/ETA every tick while
+// ui_is_navigating().
+static void start_nav_to(double lat, double lon, const char *name)
+{
+    ui_set_destination(lat, lon);
+    char meta[32];
+    snprintf(meta, sizeof(meta), "%.4f, %.4f", lat, lon);
+    ui_nav_set_destination(s_nav_p, name, meta);
+    ui_set_navigating(true);
+    ui_show_nav();
+}
+
+// Parses whatever was typed into the Goto screen (ui_goto_parse() --
+// format-aware, see its own comment) into a real destination, rather than
+// the screen transition alone this used to be.
 static void goto_start_cb(lv_event_t *e)
 {
     LV_UNUSED(e);
@@ -56,15 +71,73 @@ static void goto_start_cb(lv_event_t *e)
     // nonexistent destination. No error toast/dialog exists to explain why
     // yet, so silently declining is the best available feedback.
     if (!ui_goto_parse(s_goto_p, &lat, &lon)) return;
-
-    ui_set_destination(lat, lon);
-    char meta[32];
-    snprintf(meta, sizeof(meta), "%.4f, %.4f", lat, lon);
-    ui_nav_set_destination(s_nav_p, "Custom Destination", meta);
-    ui_set_navigating(true);
-    ui_show_nav();
+    start_nav_to(lat, lon, "Custom Destination");
 }
 static void goto_cancel_cb(lv_event_t *e) { LV_UNUSED(e); ui_show_tab(UI_TAB_HOME); }
+
+// Rebuilds Goto's saved-waypoint list from the store. Must run after EVERY
+// mutation, not just on show: the row callbacks carry a list index, so a
+// stale list would send a tap to the wrong waypoint after a delete.
+void ui_goto_refresh_saved(void)
+{
+    if (!s_goto_p) return;
+    ui_goto_saved_begin(s_goto_p);
+    int n = waypoints_count();
+    for (int i = 0; i < n; i++) {
+        waypoint_t w;
+        if (!waypoints_get(i, &w)) continue;
+        char meta[40];
+        snprintf(meta, sizeof(meta), "%.4f, %.4f", w.lat, w.lon);
+        ui_goto_saved_add(s_goto_p, i, w.name, meta);
+        // Index 0 (newest) doubles as the entry pane's recent card -- same
+        // data, no separate read.
+        if (i == 0) ui_goto_set_recent(s_goto_p, w.name, meta);
+    }
+    if (n == 0) ui_goto_set_recent(s_goto_p, NULL, NULL);
+    ui_goto_saved_end(s_goto_p);
+}
+
+// "Save" on the entry pane -- stores the typed coordinate as a waypoint
+// without navigating to it, the opposite of goto_start_cb() above. Shares
+// ui_goto_parse() with it so the two actions can never disagree about
+// what a given typed value means, out-of-range refusal included (same
+// silent no-op as Start Navigation -- see goto_start_cb()'s comment).
+static void goto_save_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    double lat, lon;
+    if (!ui_goto_parse(s_goto_p, &lat, &lon)) return;
+    waypoint_t w;
+    const char *msg;
+    switch (waypoints_add(lat, lon, &w)) {
+    case WAYPOINTS_OK:        msg = w.name;         break;
+    case WAYPOINTS_ERR_FULL:  msg = "Storage full";  break;
+    default:                  msg = "Save failed";   break;
+    }
+    ui_goto_flash_save(s_goto_p, msg);
+    // New entry lands at index 0 -- refresh so the saved list/recent card
+    // reflect it immediately rather than waiting for the next ui_show_goto().
+    ui_goto_refresh_saved();
+}
+
+static void saved_go_cb(int index)
+{
+    waypoint_t w;
+    if (!waypoints_get(index, &w)) return;
+    start_nav_to(w.lat, w.lon, w.name);
+}
+
+// Fires after ui_goto.c's own confirm dialog has already gotten a "yes" --
+// this function only ever does the actual store mutation. Refresh
+// afterward is required, not just tidy: the row callbacks carry a list
+// index, and every index at or after the deleted one just shifted down
+// one (waypoints_delete()'s remove-and-compact), so a stale list would
+// send the next tap to the wrong waypoint.
+static void saved_del_cb(int index)
+{
+    waypoints_delete(index);
+    ui_goto_refresh_saved();
+}
 
 // Settings screen's "24-hour time" switch -- real (persisted, see
 // app_settings.h). gps_ui_bridge.c re-formats every displayed clock on its
@@ -151,6 +224,9 @@ void ui_init(void)
     ui_nav_set_buttons(s_nav_p, nav_map_cb, nav_stop_cb);
     ui_goto_set_start_cb(s_goto_p, goto_start_cb, NULL);
     ui_goto_set_cancel_cb(s_goto_p, goto_cancel_cb, NULL);
+    ui_goto_set_save_cb(s_goto_p, goto_save_cb, NULL);
+    ui_goto_set_saved_cbs(s_goto_p, saved_go_cb, saved_del_cb);
+    ui_goto_refresh_saved();
 
     // Sync each switch/slider to its real persisted value -- ui_settings_create()
     // itself always creates them at their own demo values, same "creation-time
@@ -198,7 +274,11 @@ void ui_show_tab(ui_tab_t tab)
     }
 }
 
-void ui_show_goto(void) { load(s_goto_p->screen); }
+// Refreshes the saved list on the way in, so a waypoint marked from Home
+// while this screen wasn't showing is already there. Switching tabs
+// within the screen needs no refresh (nothing can change the store
+// while you're on it except delete, which rebuilds explicitly).
+void ui_show_goto(void) { ui_goto_refresh_saved(); load(s_goto_p->screen); }
 void ui_show_nav(void)  { load(s_nav_p->screen); }
 
 void ui_set_navigating(bool navigating)

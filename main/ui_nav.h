@@ -41,6 +41,8 @@ typedef struct {
     lv_obj_t *xtk_label;      /* "0.12 mi left · closing" */
     lv_obj_t *xtk_dot;
     lv_obj_t *xtk_track;      /* rail the dot slides along */
+    lv_obj_t *xtk_scale_l;    /* "0.5 mi L" -- full-scale end labels, unit-aware */
+    lv_obj_t *xtk_scale_r;
 
     lv_obj_t *btn_map;
     lv_obj_t *btn_stop;
@@ -51,18 +53,32 @@ ui_nav_t *ui_nav_create(lv_event_cb_t tab_cb);
 /* ---- setters ------------------------------------------------------------ */
 void ui_nav_set_destination(ui_nav_t *n, const char *name, const char *meta);
 
-/* Relative bearing: the arrow points at (bearing - heading). */
-void ui_nav_set_bearing(ui_nav_t *n, int bearing_deg, int heading_deg);
+/* Relative bearing: the arrow points at (bearing - heading).
+ * heading_valid == false (stationary, or no fix -- see gps.h's
+ * heading_valid) blanks HDG/TURN and parks the arrow straight up; BRG is
+ * position-derived and stays live either way. */
+void ui_nav_set_bearing(ui_nav_t *n, int bearing_deg, int heading_deg,
+                        bool heading_valid);
 
 // distance/vmg/speed are already converted; unit is "mi"/"km" (distance) or
 // "mph"/"km/h" (closure, speed) per app_settings_get_distance_km().
 void ui_nav_set_distance(ui_nav_t *n, float distance, const char *unit);
 void ui_nav_set_closure(ui_nav_t *n, float vmg, const char *unit);
+// Closure is speed projected onto the bearing, so it needs a real heading
+// -- with none (stationary, see gps.h's heading_valid) it blanks to "--".
+void ui_nav_set_closure_unknown(ui_nav_t *n);
+// No fix: blank every position-derived value at once rather than leaving
+// stale numbers that look live. Destination name/meta are left alone.
+void ui_nav_set_stale(ui_nav_t *n);
 void ui_nav_set_eta(ui_nav_t *n, const char *eta_text, const char *time_to_go);
 void ui_nav_set_speed(ui_nav_t *n, float speed, const char *unit);
 
-/* offset_mi: negative = left of course, positive = right. Full-scale ±0.5 mi. */
-void ui_nav_set_cross_track(ui_nav_t *n, float offset_mi, bool closing);
+// offset/full_scale share a unit ("mi"/"km", from
+// app_settings_get_distance_km()) -- negative offset = left of course,
+// positive = right. valid=false blanks the card (no leg origin latched
+// yet, or no fix) rather than showing a stale or fabricated number.
+void ui_nav_set_cross_track(ui_nav_t *n, float offset, const char *unit,
+                            float full_scale, bool closing, bool valid);
 
 /* Attach handlers to the two footer buttons. */
 void ui_nav_set_buttons(ui_nav_t *n, lv_event_cb_t map_cb, lv_event_cb_t stop_cb);

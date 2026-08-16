@@ -45,6 +45,8 @@ typedef struct {
 
     lv_obj_t *track_btn;
     lv_obj_t *track_btn_label;
+    lv_obj_t *mark_btn;
+    lv_obj_t *mark_btn_label;   /* label swapped for ~1.8s by ui_home_flash_mark() */
     bool tracking;
 
     // Set by gps_ui_bridge.c via ui_home_set_reset_trip_cb() so the Reset
@@ -64,7 +66,9 @@ void ui_home_set_position(ui_home_t *h, const char *lat, const char *lon);
 // app_settings_get_elevation_m(); this screen just displays what it's given.
 void ui_home_set_accuracy(ui_home_t *h, float value, const char *unit);
 void ui_home_set_speed(ui_home_t *h, float speed, const char *unit);
-void ui_home_set_heading(ui_home_t *h, int deg, const char *cardinal);
+// valid == false (stationary, or no fix) shows "---"/"--" -- see gps.h's
+// heading_valid for why a GPS course-over-ground can't be trusted at rest.
+void ui_home_set_heading(ui_home_t *h, int deg, const char *cardinal, bool valid);
 void ui_home_set_altitude(ui_home_t *h, int altitude, const char *unit);
 void ui_home_set_satellites(ui_home_t *h, int count, const char *quality);
 // Despite the original design's card being captioned "TIME (UTC)", this
@@ -91,6 +95,16 @@ void ui_home_set_tracking(ui_home_t *h, bool on);
 // never set, the button still resets this screen's own displayed values
 // but nothing upstream keeps re-feeding it real ones.
 void ui_home_set_reset_trip_cb(ui_home_t *h, void (*cb)(void));
+
+// Same split as reset-trip: the Mark Position handler lives in
+// gps_ui_bridge.c because it needs the live GPS position, which this file
+// has no access to.
+void ui_home_set_mark_cb(ui_home_t *h, void (*cb)(void));
+
+// Briefly replaces the Mark Position button's own label with `text` (the
+// new waypoint's name, or why it failed), then restores it after ~1.8s.
+// Stands in for a toast/snackbar, which this app doesn't have.
+void ui_home_flash_mark(ui_home_t *h, const char *text);
 
 #ifdef __cplusplus
 }

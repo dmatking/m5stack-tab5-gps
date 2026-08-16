@@ -39,6 +39,13 @@
 #define GPS_TX_GPIO  GPIO_NUM_37  // Tab5 M5-Bus TXD0 (bus pin 14) -- unused
 #define GPS_BAUD     115200
 
+// Below this, RMC's course-over-ground is noise rather than a heading --
+// see gps.h's heading_valid. 1 knot (~1.15 mph) is roughly the same
+// "actually moving" line gps_ui_bridge.c's MOVING_MPH_THRESHOLD draws for
+// the trip odometer, chosen for the same reason: parked GPS jitter
+// shouldn't read as motion.
+#define HEADING_MIN_KNOTS 1.0f
+
 #define GPS_LINE_MAX 128
 #define GPS_LOG_PATH SD_MOUNT_POINT "/gps_log.txt"
 
@@ -451,13 +458,19 @@ static void handle_rmc(char *sentence)
     if (track && track[0] != '\0') {
         tmp.heading_deg = strtof(track, NULL);
     }
+    // See gps.h's heading_valid -- course-over-ground is noise below
+    // walking pace, so it's gated on an active fix plus real motion rather
+    // than just "the field was present". Recomputed every RMC, so it drops
+    // back to false as soon as you stop.
+    tmp.heading_valid = tmp.rmc_fix && tmp.speed_valid &&
+                        tmp.speed_knots > HEADING_MIN_KNOTS;
 
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     s_state = tmp;
     xSemaphoreGive(s_mutex);
 
-    ESP_LOGI(TAG, "RMC fix=%d spd=%.1f hdg=%.1f",
-             tmp.rmc_fix, tmp.speed_knots, tmp.heading_deg);
+    ESP_LOGI(TAG, "RMC fix=%d spd=%.1f hdg=%.1f hdg_valid=%d",
+             tmp.rmc_fix, tmp.speed_knots, tmp.heading_deg, tmp.heading_valid);
 }
 
 static void handle_sentence(char *sentence)
