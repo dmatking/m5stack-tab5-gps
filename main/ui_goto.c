@@ -5,22 +5,25 @@
 static ui_goto_t s_goto;
 
 static const char *fmt_text[3] = { "DD MM.MMMM", "DD.DDDDDD", "DD MM SS" };
+// idx 9 used to be a dedicated "N / S" hemisphere-toggle key; hemisphere is
+// now toggled by tapping the N/S/E/W badge next to each field directly
+// (coord_field()'s hemi_badge_cb), which freed this slot for a real decimal
+// point -- see parse_field()'s own comment on why DD.DDDDDD needed one.
 static const char *keys[12] = { "1","2","3","4","5","6","7","8","9",
-                                "N / S","0","DEL" };
+                                ".","0","DEL" };
 
 /* ------------------------------------------------------------------ helpers */
 
 // Live, format-aware rendering of whatever's been typed so far -- e.g. lat
-// digits "329642" under DD MM.MMMM shows as "32\xC2\xB0 96.42'" while still
+// digits "3296" under DD MM SS shows as "32\xC2\xB0 96" while still
 // mid-entry. This is what parse_field() (further down) has always
-// interpreted the raw digit buffer AS, it just never showed up anywhere
-// before: switching the format buttons looked like it did nothing, and
-// DD.DDDDDD's decimal point -- always positionally implied, no literal '.'
-// keypress needed or possible on this keypad -- never appeared either, so
-// it read as "no way to enter decimal degrees" even though the fixed-width
-// digit convention already produces exactly that once parsed. Segment
-// widths here must match parse_field()'s layout exactly; kept as a second
-// hardcoded `deg_w` rather than sharing one, same as that function already
+// interpreted the raw digit buffer AS for DDM/DMS, it just never showed up
+// anywhere before: switching the format buttons looked like it did
+// nothing. DD.DDDDDD is handled separately below -- it's free-form now
+// (see parse_field()'s comment on why), so there's nothing to segment,
+// just the typed string plus a degree sign. DDM/DMS's segment widths here
+// must match parse_field()'s layout exactly; kept as a second hardcoded
+// `deg_w` rather than sharing one, same as that function already
 // duplicates it from nowhere else -- there's no third place that needs it.
 static void format_entry_preview(const char *digits, ui_coord_fmt_t fmt, bool is_lat,
                                  char *out, size_t out_size)
@@ -30,15 +33,27 @@ static void format_entry_preview(const char *digits, ui_coord_fmt_t fmt, bool is
         return;
     }
 
+    if (fmt == UI_COORD_DD) {
+        // Free-form -- show exactly what's been typed (digits and at most
+        // one '.' from the keypad's decimal key), degree sign appended.
+        // No fixed-width degree field here, unlike DDM/DMS below -- see
+        // parse_field()'s matching comment for why.
+        lv_snprintf(out, out_size, "%s\xC2\xB0", digits);
+        return;
+    }
+
+    // DD.DDDDDD returned above -- everything below is DDM/DMS, unchanged:
+    // still the original fixed-width positional convention, degree field
+    // included (a longitude under 100\xC2\xB0 still needs a typed leading
+    // zero to fill it, same as before this fix). Only DD.DDDDDD's
+    // degree/fraction split needed a real decimal key -- DDM/DMS's own
+    // internal split (whole vs. fractional minutes) is a fixed 2-then-4
+    // digit convention with no equivalent ambiguity to fix.
     int deg_w = is_lat ? 2 : 3;
     int seg_w[3];
     const char *seg_punct[3];
     int nseg;
-    if (fmt == UI_COORD_DD) {
-        seg_w[0] = deg_w; seg_punct[0] = ".";
-        seg_w[1] = 6;     seg_punct[1] = "\xC2\xB0";           /* deg sign */
-        nseg = 2;
-    } else if (fmt == UI_COORD_DDM) {
+    if (fmt == UI_COORD_DDM) {
         seg_w[0] = deg_w; seg_punct[0] = "\xC2\xB0 ";
         seg_w[1] = 2;     seg_punct[1] = ".";
         seg_w[2] = 4;     seg_punct[2] = "'";
@@ -106,6 +121,19 @@ static void field_cb(lv_event_t *e)
     refresh_fields(g);
 }
 
+// Tapping the N/S/E/W badge directly flips that field's hemisphere (and
+// makes it the active field, same as tapping anywhere else on its card) --
+// replaces the old dedicated keypad key, see keys[]'s own comment on why.
+static void hemi_badge_cb(lv_event_t *e)
+{
+    ui_goto_t *g = &s_goto;
+    ui_goto_field_t which = (ui_goto_field_t)(lv_uintptr_t)lv_event_get_user_data(e);
+    g->active = which;
+    if (which == UI_GOTO_FIELD_LAT) g->lat_north = !g->lat_north;
+    else                            g->lon_east  = !g->lon_east;
+    refresh_fields(g);
+}
+
 static void fmt_cb(lv_event_t *e)
 {
     ui_goto_set_format(&s_goto,
@@ -121,9 +149,16 @@ static void key_cb(lv_event_t *e)
 
     if (idx == 11) {                       /* DEL */
         if (len) buf[len - 1] = '\0';
-    } else if (idx == 9) {                 /* hemisphere toggle */
-        if (g->active == UI_GOTO_FIELD_LAT) g->lat_north = !g->lat_north;
-        else                                g->lon_east  = !g->lon_east;
+    } else if (idx == 9) {                 /* decimal point -- DD format only */
+        // DDM/DMS's decimal points (minutes' fraction) stay positionally
+        // implied, fixed-width -- only DD.DDDDDD's degree/fraction split is
+        // free-form enough to need an explicit key. Silently ignored
+        // otherwise, same as DEL on an already-empty field: nothing to do,
+        // not an error. At most one '.' -- a second tap is also a no-op.
+        if (g->fmt == UI_COORD_DD && !strchr(buf, '.') &&
+            len < sizeof(g->lat_buf) - 1) {
+            buf[len] = '.'; buf[len + 1] = '\0';
+        }
     } else {
         const char *d = (idx == 10) ? "0" : keys[idx];
         if (len < sizeof(g->lat_buf) - 1) { buf[len] = d[0]; buf[len + 1] = '\0'; }
@@ -160,6 +195,12 @@ static lv_obj_t *coord_field(lv_obj_t *parent, const char *caption,
     lv_obj_set_style_radius(badge, 12, 0);
     lv_obj_set_style_bg_color(badge, UI_C_CARD_ALT, 0);
     lv_obj_set_style_bg_opa(badge, LV_OPA_COVER, 0);
+    // Already CLICKABLE from ui_box()'s default constructor -- previously
+    // left with no handler, which under LVGL's deepest-clickable-wins hit
+    // testing meant tapping exactly on the badge silently swallowed the
+    // tap instead of reaching the card's own field_cb. Now it does
+    // something instead of nothing.
+    lv_obj_add_event_cb(badge, hemi_badge_cb, LV_EVENT_CLICKED, (void *)(lv_uintptr_t)which);
     *out_hemi = ui_label(badge, hemi, ui_font.semi_m, UI_C_GREEN);
     lv_obj_center(*out_hemi);
     return c;
@@ -570,10 +611,28 @@ void ui_goto_saved_end(ui_goto_t *g)
     update_saved_visibility(g);
 }
 
+// Removes any '.' from a buffer in place -- DDM/DMS's fixed-width segment
+// walk (format_entry_preview()/parse_field()) assumes pure digits, but
+// DD.DDDDDD's decimal key can leave one behind if the user switches format
+// mid-entry. Without this, that '.' would just be copied/atof()'d as if it
+// were a digit, miscounting every segment after it.
+static void strip_dot(char *buf)
+{
+    char *w = buf;
+    for (char *r = buf; *r; r++) {
+        if (*r != '.') *w++ = *r;
+    }
+    *w = '\0';
+}
+
 void ui_goto_set_format(ui_goto_t *g, ui_coord_fmt_t fmt)
 {
     if (!g) return;
     g->fmt = fmt;
+    if (fmt != UI_COORD_DD) {
+        strip_dot(g->lat_buf);
+        strip_dot(g->lon_buf);
+    }
     for (int i = 0; i < 3; i++) {
         bool on = (i == (int)fmt);
         lv_obj_set_style_border_color(g->fmt_btn[i], on ? UI_C_BLUE : UI_C_BORDER, 0);
@@ -618,14 +677,24 @@ const char *ui_goto_get_lon(ui_goto_t *g) { return g ? g->lon_buf : ""; }
 // Digit-string -> decimal-degrees magnitude, format- and field-aware (lat's
 // degree field is 2 digits, max 90; lon's is 3, max 180 -- same convention
 // already used throughout this app's DDM display, e.g. gps_ui_bridge.c's
-// format_ddm()). key_cb() only ever appends bare digit characters (no
-// punctuation), so this is the first place any of these typed digits get
-// interpreted as an actual coordinate at all -- there was no pre-existing
-// convention to match, this is a new one, documented here:
+// format_ddm()). key_cb() only ever appends bare digit characters (or, for
+// DD.DDDDDD, at most one literal '.') -- this is the first place any of
+// these get interpreted as an actual coordinate at all:
 //   DDM: <deg><MM><MMMM>   -- e.g. lat "32596420" -> 32 deg, 59.6420 min
-//   DD:  <deg><DDDDDD>     -- e.g. lat "32902057"  -> 32.902057 deg
+//   DD:  free-form, atof() -- e.g. lat "32.9021"   -> 32.9021 deg
 //   DMS: <deg><MM><SS>     -- e.g. lat "325934"    -> 32 deg 59 min 34 sec
-// Fewer digits than the format needs are treated as trailing zeros (a
+// DD used to be fixed-width like the other two (<deg><DDDDDD>, a 2-or-3
+// digit degree field same as DDM/DMS's), which meant a longitude under
+// 100 needed a typed leading zero ("097...") before its degrees field
+// "finished" and the fraction could start -- otherwise the 3rd digit typed
+// silently became part of degrees instead of the fraction, e.g. lat/lon
+// mixed up which digit was which. DD.DDDDDD's whole point is typing an
+// ordinary decimal number, so it gets to just be one now -- no leading
+// zero, no fixed width, degrees is however many digits precede the '.'.
+// DDM/DMS keep the fixed-width convention below (their own internal
+// splits -- whole/fractional minutes, minutes/seconds -- are narrow,
+// well-known-width fields, not the trap the degree field was).
+// Fewer digits than DDM/DMS need are treated as trailing zeros (a
 // partially-typed field still parses to *something* sane); extra digits
 // beyond that are ignored. Result is clamped to the field's valid range
 // (0-90 lat, 0-180 lon) rather than rejected -- simplest well-defined
@@ -633,6 +702,14 @@ const char *ui_goto_get_lon(ui_goto_t *g) { return g ? g->lon_buf : ""; }
 // through yet.
 static double parse_field(const char *digits, ui_coord_fmt_t fmt, bool is_lat)
 {
+    double max = is_lat ? 90.0 : 180.0;
+    if (fmt == UI_COORD_DD) {
+        double value = atof(digits);
+        if (value < 0.0) value = 0.0;
+        if (value > max)  value = max;
+        return value;
+    }
+
     int deg_w = is_lat ? 2 : 3;
     char buf[16] = { 0 };
     size_t n = strlen(digits);
@@ -640,7 +717,7 @@ static double parse_field(const char *digits, ui_coord_fmt_t fmt, bool is_lat)
     memcpy(buf, digits, n);
     // Pad with '0' out to the format's full field width so a short/empty
     // entry still parses instead of reading past the end of what was typed.
-    int total_w = deg_w + (fmt == UI_COORD_DMS ? 4 : 6); // DDM/DD both 6, DMS 4
+    int total_w = deg_w + (fmt == UI_COORD_DMS ? 4 : 6); // DDM 6, DMS 4
     for (size_t i = n; i < (size_t)total_w && i < sizeof(buf) - 1; i++) buf[i] = '0';
 
     char tmp[8];
@@ -648,10 +725,7 @@ static double parse_field(const char *digits, ui_coord_fmt_t fmt, bool is_lat)
     double deg = atof(tmp);
 
     double value;
-    if (fmt == UI_COORD_DD) {
-        memcpy(tmp, buf + deg_w, 6); tmp[6] = '\0';
-        value = deg + atof(tmp) / 1e6;
-    } else if (fmt == UI_COORD_DDM) {
+    if (fmt == UI_COORD_DDM) {
         memcpy(tmp, buf + deg_w, 2); tmp[2] = '\0';
         double min_whole = atof(tmp);
         memcpy(tmp, buf + deg_w + 2, 4); tmp[4] = '\0';
@@ -665,7 +739,6 @@ static double parse_field(const char *digits, ui_coord_fmt_t fmt, bool is_lat)
         value = deg + min / 60.0 + sec / 3600.0;
     }
 
-    double max = is_lat ? 90.0 : 180.0;
     if (value < 0.0) value = 0.0;
     if (value > max)  value = max;
     return value;
