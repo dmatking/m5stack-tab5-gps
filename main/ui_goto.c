@@ -126,8 +126,15 @@ static void refresh_fields(ui_goto_t *g)
     lv_label_set_text(g->lat_value, lat_disp);
     lv_label_set_text(g->lon_value, lon_disp);
 
-    lv_label_set_text(g->lat_hemi, g->lat_north ? "N" : "S");
-    lv_label_set_text(g->lon_hemi, g->lon_east ? "E" : "W");
+    // DD.DDDDDD reads as a signed decimal number (e.g. -97.3261), so its
+    // badge shows +/- instead of a hemisphere letter -- DDM/DMS keep N/S/
+    // E/W, the convention those formats are always written in. Same
+    // underlying lat_north/lon_east bool either way (+ north/east, -
+    // south/west), so ui_goto_parse()'s sign logic doesn't need to know or
+    // care which format is showing.
+    bool dd = (g->fmt == UI_COORD_DD);
+    lv_label_set_text(g->lat_hemi, dd ? (g->lat_north ? "+" : "-") : (g->lat_north ? "N" : "S"));
+    lv_label_set_text(g->lon_hemi, dd ? (g->lon_east  ? "+" : "-") : (g->lon_east  ? "E" : "W"));
 }
 
 /* Saved-list row actions. Set from design_ui.c, which owns the store. */
