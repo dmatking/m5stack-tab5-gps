@@ -83,13 +83,42 @@ static void format_entry_preview(const char *digits, ui_coord_fmt_t fmt, bool is
     out[o] = '\0';
 }
 
+// Forward-declared -- parse_field() (near ui_goto_parse(), at the bottom)
+// is this file's single source of truth for interpreting a typed buffer as
+// a coordinate magnitude, but refresh_fields() below needs the *unclamped*
+// value to know whether to flag a field as out of range, before that
+// function is defined.
+static double parse_field_raw(const char *digits, ui_coord_fmt_t fmt, bool is_lat);
+
+// True while the field is either still empty (nothing typed, nothing to
+// flag) or unambiguously within [0, max] for its axis; false once it's
+// gone past -- e.g. a typed latitude magnitude over 90. refresh_fields()
+// colors a false field red, and ui_goto_parse() refuses to navigate while
+// either one is -- see ui_goto_parse()'s own comment for why silent
+// clamping (which parse_field() also still does, as a last-resort
+// fallback) isn't good enough for a field that's actually driving where
+// "Start Navigation" sends you.
+static bool field_in_range(const char *digits, ui_coord_fmt_t fmt, bool is_lat)
+{
+    if (digits[0] == '\0') return true;
+    double max = is_lat ? 90.0 : 180.0;
+    return parse_field_raw(digits, fmt, is_lat) <= max;
+}
+
 static void refresh_fields(ui_goto_t *g)
 {
     bool lat = (g->active == UI_GOTO_FIELD_LAT);
-    lv_obj_set_style_border_color(g->lat_card, lat ? UI_C_BLUE : UI_C_BORDER, 0);
-    lv_obj_set_style_border_color(g->lon_card, lat ? UI_C_BORDER : UI_C_BLUE, 0);
-    lv_obj_set_style_text_color(g->lat_value, lat ? UI_C_TEXT : UI_C_TEXT_2, 0);
-    lv_obj_set_style_text_color(g->lon_value, lat ? UI_C_TEXT_2 : UI_C_TEXT, 0);
+    bool lat_ok = field_in_range(g->lat_buf, g->fmt, true);
+    bool lon_ok = field_in_range(g->lon_buf, g->fmt, false);
+
+    lv_obj_set_style_border_color(g->lat_card,
+        !lat_ok ? UI_C_RED : (lat ? UI_C_BLUE : UI_C_BORDER), 0);
+    lv_obj_set_style_border_color(g->lon_card,
+        !lon_ok ? UI_C_RED : (lat ? UI_C_BORDER : UI_C_BLUE), 0);
+    lv_obj_set_style_text_color(g->lat_value,
+        !lat_ok ? UI_C_RED : (lat ? UI_C_TEXT : UI_C_TEXT_2), 0);
+    lv_obj_set_style_text_color(g->lon_value,
+        !lon_ok ? UI_C_RED : (lat ? UI_C_TEXT_2 : UI_C_TEXT), 0);
 
     char lat_disp[32], lon_disp[32];
     format_entry_preview(g->lat_buf, g->fmt, true,  lat_disp, sizeof(lat_disp));
@@ -696,19 +725,13 @@ const char *ui_goto_get_lon(ui_goto_t *g) { return g ? g->lon_buf : ""; }
 // well-known-width fields, not the trap the degree field was).
 // Fewer digits than DDM/DMS need are treated as trailing zeros (a
 // partially-typed field still parses to *something* sane); extra digits
-// beyond that are ignored. Result is clamped to the field's valid range
-// (0-90 lat, 0-180 lon) rather than rejected -- simplest well-defined
-// behavior for a fat-fingered entry, no error-dialog UI exists to reject
-// through yet.
-static double parse_field(const char *digits, ui_coord_fmt_t fmt, bool is_lat)
+// beyond that are ignored. Unclamped -- field_in_range() (above) is what
+// actually flags an out-of-range magnitude; parse_field() below just
+// clamps it as a last-resort fallback for the rare path that skips that
+// check (e.g. a stray call before the UI's ever refreshed once).
+static double parse_field_raw(const char *digits, ui_coord_fmt_t fmt, bool is_lat)
 {
-    double max = is_lat ? 90.0 : 180.0;
-    if (fmt == UI_COORD_DD) {
-        double value = atof(digits);
-        if (value < 0.0) value = 0.0;
-        if (value > max)  value = max;
-        return value;
-    }
+    if (fmt == UI_COORD_DD) return atof(digits);
 
     int deg_w = is_lat ? 2 : 3;
     char buf[16] = { 0 };
@@ -724,21 +747,30 @@ static double parse_field(const char *digits, ui_coord_fmt_t fmt, bool is_lat)
     memcpy(tmp, buf, (size_t)deg_w); tmp[deg_w] = '\0';
     double deg = atof(tmp);
 
-    double value;
     if (fmt == UI_COORD_DDM) {
         memcpy(tmp, buf + deg_w, 2); tmp[2] = '\0';
         double min_whole = atof(tmp);
         memcpy(tmp, buf + deg_w + 2, 4); tmp[4] = '\0';
         double min_frac = atof(tmp) / 1e4;
-        value = deg + (min_whole + min_frac) / 60.0;
-    } else { // UI_COORD_DMS
-        memcpy(tmp, buf + deg_w, 2); tmp[2] = '\0';
-        double min = atof(tmp);
-        memcpy(tmp, buf + deg_w + 2, 2); tmp[2] = '\0';
-        double sec = atof(tmp);
-        value = deg + min / 60.0 + sec / 3600.0;
+        return deg + (min_whole + min_frac) / 60.0;
     }
+    // UI_COORD_DMS
+    memcpy(tmp, buf + deg_w, 2); tmp[2] = '\0';
+    double min = atof(tmp);
+    memcpy(tmp, buf + deg_w + 2, 2); tmp[2] = '\0';
+    double sec = atof(tmp);
+    return deg + min / 60.0 + sec / 3600.0;
+}
 
+// Result is clamped to the field's valid range (0-90 lat, 0-180 lon)
+// rather than rejected -- but see ui_goto_parse() below, which now checks
+// field_in_range() *before* calling this, so in practice Start Navigation
+// never actually reaches an unclamped-then-silently-coerced value; this
+// clamp is a defensive fallback, not the real validation anymore.
+static double parse_field(const char *digits, ui_coord_fmt_t fmt, bool is_lat)
+{
+    double max = is_lat ? 90.0 : 180.0;
+    double value = parse_field_raw(digits, fmt, is_lat);
     if (value < 0.0) value = 0.0;
     if (value > max)  value = max;
     return value;
@@ -753,6 +785,14 @@ bool ui_goto_parse(ui_goto_t *g, double *out_lat, double *out_lon)
     // there's no error-dialog UI to explain a bad entry through yet, so a
     // no-op (stay on this screen) is the safest failure mode available.
     if (g->lat_buf[0] == '\0' && g->lon_buf[0] == '\0') return false;
+    // Same refusal for a magnitude that's actually out of range (lat > 90,
+    // lon > 180) -- these fields are already showing red by the time
+    // Start Navigation could be tapped (refresh_fields()'s field_in_range()
+    // check), so this isn't the user's only signal something's wrong, but
+    // it's what stops a fat-fingered "99.85" from silently becoming a
+    // clamped-to-90 destination with no indication it wasn't what was typed.
+    if (!field_in_range(g->lat_buf, g->fmt, true))  return false;
+    if (!field_in_range(g->lon_buf, g->fmt, false)) return false;
     double lat = parse_field(g->lat_buf, g->fmt, true);
     double lon = parse_field(g->lon_buf, g->fmt, false);
     *out_lat = g->lat_north ? lat : -lat;
