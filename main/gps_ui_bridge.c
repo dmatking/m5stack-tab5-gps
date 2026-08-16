@@ -18,6 +18,7 @@
 #include "design_ui.h"
 #include "gps.h"
 #include "sd_card.h"
+#include "trip_store.h"
 #include "waypoints.h"
 
 #include "esp_log.h"
@@ -285,10 +286,12 @@ static float cross_track_miles(double olat, double olon, double dlat, double dlo
 }
 
 // Telemetry's (and now Home's, see ui_home_set_trip() below) trip/max-speed/
-// moving-time/elevation-gain accumulator. Session-only until
-// gps_ui_bridge_reset_trip() is called (wired to Home's Reset Trip button,
-// see ui_home_set_reset_trip_cb()) -- otherwise these just climb from zero
-// at boot for as long as the app runs. Distance/moving-time/elevation-gain
+// moving-time/elevation-gain accumulator. Persisted now (main/trip_store.h)
+// rather than purely session-only -- gps_ui_bridge_reset_trip() (wired to
+// Home's Reset Trip button, see ui_home_set_reset_trip_cb()) still zeroes
+// it on demand, but a plain power cycle no longer does the same thing by
+// accident (a real trip lost to a hard power-off outdoors, not a reset
+// button, is what motivated this). Distance/moving-time/elevation-gain
 // only accrue above MOVING_MPH_THRESHOLD, to keep GPS position/altitude
 // jitter while parked from slowly inflating the trip odometer.
 #define MOVING_MPH_THRESHOLD 1.15f  // ~1 knot
@@ -299,6 +302,16 @@ static float  s_trip_miles;
 static float  s_max_mph;
 static uint32_t s_moving_ticks;
 static float  s_elev_gain_ft;
+
+// Persistence for the four totals above -- deliberately NOT saved every
+// tick (2Hz over a multi-hour drive is 7000+ NVS writes/hour for no
+// benefit, real flash wear for a total nobody's reading that often).
+// s_trip_save_tick throttles to roughly once every TRIP_SAVE_TICKS ticks;
+// s_trip_last_saved is compared against the current totals so a save is
+// skipped entirely while parked/no-fix and nothing's actually changed.
+#define TRIP_SAVE_TICKS (30000 / TICK_PERIOD_MS)  // ~30s
+static int          s_trip_save_tick;
+static trip_totals_t s_trip_last_saved;
 
 // Vertical speed (fpm) from consecutive altitude readings, 500ms apart --
 // noisy on its own (GPS altitude jitter amplified ~120x by the short
@@ -871,6 +884,25 @@ static void tick(void)
     // bars are fed with everyone else's up at the top of this function.
 
     lvgl_port_unlock();
+
+    // Trip persistence -- deliberately outside the lvgl lock above: a real
+    // flash write (nvs_commit()) can take tens of ms, and there's no reason
+    // to hold LVGL's redraw hostage to that when these are plain statics
+    // this same task already owns exclusively. See TRIP_SAVE_TICKS' own
+    // comment for why this isn't done every tick.
+    if (++s_trip_save_tick >= TRIP_SAVE_TICKS) {
+        s_trip_save_tick = 0;
+        trip_totals_t now = {
+            .distance_mi  = s_trip_miles,
+            .max_mph      = s_max_mph,
+            .moving_s     = (uint32_t)(s_moving_ticks * (TICK_PERIOD_MS / 1000.0f)),
+            .elev_gain_ft = s_elev_gain_ft,
+        };
+        if (memcmp(&now, &s_trip_last_saved, sizeof(now)) != 0) {
+            trip_store_save(&now);
+            s_trip_last_saved = now;
+        }
+    }
 }
 
 // Zeroes the trip accumulator above -- wired to Home's Reset Trip button
@@ -879,6 +911,9 @@ static void tick(void)
 // Clears the have_prev_* flags too, not just the running totals -- otherwise
 // the very next tick would compute one huge bogus distance/elevation delta
 // against the stale pre-reset position/altitude instead of starting clean.
+// Also clears the persisted copy immediately, same as the in-RAM one --
+// waiting up to TRIP_SAVE_TICKS for the next periodic save would mean a
+// reset that doesn't survive a power cycle for the next half-minute.
 void gps_ui_bridge_reset_trip(void)
 {
     s_trip_miles = 0.0f;
@@ -887,6 +922,9 @@ void gps_ui_bridge_reset_trip(void)
     s_elev_gain_ft = 0.0f;
     s_have_prev_pos = false;
     s_have_prev_alt = false;
+    trip_store_clear();
+    s_trip_last_saved = (trip_totals_t){ 0 };
+    s_trip_save_tick = 0;
 }
 
 void gps_ui_bridge_mark_waypoint(void)
@@ -930,6 +968,22 @@ void gps_ui_bridge_start(void)
         ui_home_set_reset_trip_cb(h, gps_ui_bridge_reset_trip);
         ui_home_set_mark_cb(h, gps_ui_bridge_mark_waypoint);
     }
+
+    // Resume wherever the last session's trip left off, rather than
+    // starting every boot at zero -- see trip_store.h's own comment for
+    // why this exists. s_have_prev_pos/s_have_prev_alt stay false (their
+    // normal boot-time default): there's no previous *tick* to diff
+    // against yet, only a previously-saved running total to carry
+    // forward, so the first fresh position/altitude this session still
+    // starts its own delta cleanly instead of comparing against wherever
+    // the device was when it was last saved.
+    trip_totals_t saved;
+    trip_store_load(&saved);
+    s_trip_miles    = saved.distance_mi;
+    s_max_mph       = saved.max_mph;
+    s_moving_ticks  = (uint32_t)((uint64_t)saved.moving_s * 1000 / TICK_PERIOD_MS);
+    s_elev_gain_ft  = saved.elev_gain_ft;
+    s_trip_last_saved = saved;
 
     xTaskCreate(bridge_task, "gps_ui_bridge", 4096, NULL, 3, NULL);
 }
