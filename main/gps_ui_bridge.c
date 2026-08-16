@@ -302,6 +302,25 @@ static int  s_battery_tick;
 static bool s_battery_have;
 static int  s_battery_pct;
 
+// Every field in the status bar is a global value -- fix state, sat count,
+// local time, battery -- none of it is screen-specific, so every screen's
+// bar gets fed identically through here rather than each call site doing
+// its own thing. That divergence is exactly what left Nav/Goto/Map showing
+// ui_status_create()'s "GPS FIX"/"14 sats"/"10:24 AM" demo strings forever
+// (only Home and Telemetry were ever wired for fix/sats/clock; battery got
+// added to the rest later). Harmless while those bars rendered nothing at
+// all, actively misleading once they did -- a stale green "GPS FIX" next to
+// a live battery percent reads as a real fix. clock_buf NULL = no valid
+// local time yet, leave whatever's there alone.
+static void push_status(ui_status_t *s, bool fix, int sats, const char *clock_buf)
+{
+    if (!s) return;
+    ui_status_set_fix(s, fix ? "GPS FIX" : "NO FIX", fix);
+    ui_status_set_sats(s, sats);
+    if (clock_buf)      ui_status_set_clock(s, clock_buf);
+    if (s_battery_have) ui_status_set_battery(s, s_battery_pct);
+}
+
 static void tick(void)
 {
     gps_state_t st = gps_get_state();
@@ -332,17 +351,6 @@ static void tick(void)
         return;
     }
 
-    // Battery: every screen's status bar, real once the INA226 has answered
-    // at least once (see s_battery_have's own comment) -- the one field on
-    // this screen (and every other status bar in the app) gps_ui_bridge.c
-    // couldn't previously make real for lack of any fuel-gauge hardware.
-    if (s_battery_have) {
-        ui_status_set_battery(&h->status, s_battery_pct);
-    }
-
-    ui_status_set_fix(&h->status, fix ? "GPS FIX" : "NO FIX", fix);
-    ui_status_set_sats(&h->status, st.sats_in_use);
-
     // US Central time, not UTC -- this project's users are all in one
     // place, so showing raw UTC (technically simpler, but requires doing
     // timezone arithmetic in your head every time you glance at the clock)
@@ -353,13 +361,32 @@ static void tick(void)
     bool have_local = st.time_valid && st.date_valid;
     struct tm local_tm;
     const char *tz_abbrev = NULL;
+    char status_clock[24];
+    const char *status_clock_p = NULL;   // NULL until there's a real time to show
     if (have_local) {
         us_central_from_utc(&st.utc_tm, &local_tm, &tz_abbrev);
-        char time_part[16], clock_buf[24];
+        char time_part[16];
         format_clock(time_part, sizeof(time_part), local_tm.tm_hour, local_tm.tm_min, 0, false);
-        snprintf(clock_buf, sizeof(clock_buf), "%s %s", time_part, tz_abbrev);
-        ui_status_set_clock(&h->status, clock_buf);
+        snprintf(status_clock, sizeof(status_clock), "%s %s", time_part, tz_abbrev);
+        status_clock_p = status_clock;
     }
+
+    // Every status bar, one call each -- see push_status()'s own comment.
+    // Settings is deliberately absent: its header is hand-rolled rather than
+    // ui_status_create()'d (no fix dot or sat count to fill in) and it wants
+    // the clock without the timezone suffix, so it's fed separately below.
+    push_status(&h->status, fix, st.sats_in_use, status_clock_p);
+    ui_telemetry_t *tel_ui = ui_telemetry();
+    if (tel_ui) push_status(&tel_ui->status, fix, st.sats_in_use, status_clock_p);
+    ui_nav_t *nav_status_ui = ui_nav();
+    if (nav_status_ui) push_status(&nav_status_ui->status, fix, st.sats_in_use, status_clock_p);
+    ui_goto_t *goto_ui = ui_goto();
+    if (goto_ui) push_status(&goto_ui->status, fix, st.sats_in_use, status_clock_p);
+    // Map's LVGL screen is never actually shown (ui_shell_enter_map() stops
+    // LVGL and hands the panel to the native renderer, which draws its own
+    // status bar) -- fed anyway for consistency, costs nothing.
+    ui_map_t *map_ui = ui_map();
+    if (map_ui) push_status(&map_ui->status, fix, st.sats_in_use, status_clock_p);
 
     if (st.latlon_valid) {
         int coord_fmt = app_settings_get_coord_format();
@@ -422,18 +449,8 @@ static void tick(void)
     // are still computed below where something else still needs them
     // (the trip accumulator, Home's own cards), just no longer also pushed
     // into Telemetry setters that no longer exist.
-    ui_telemetry_t *t = ui_telemetry();
+    ui_telemetry_t *t = tel_ui;   // status bar already fed above
     if (t) {
-        if (s_battery_have) ui_status_set_battery(&t->status, s_battery_pct);
-        ui_status_set_fix(&t->status, fix ? "GPS FIX" : "NO FIX", fix);
-        ui_status_set_sats(&t->status, st.sats_in_use);
-        if (have_local) {
-            char time_part[16], clock_buf[24];
-            format_clock(time_part, sizeof(time_part), local_tm.tm_hour, local_tm.tm_min, 0, false);
-            snprintf(clock_buf, sizeof(clock_buf), "%s %s", time_part, tz_abbrev);
-            ui_status_set_clock(&t->status, clock_buf);
-        }
-
         float speed_mph = 0.0f;
         bool moving_now = false;
         if (st.speed_valid) {
@@ -594,8 +611,7 @@ static void tick(void)
     // to define that line, separate state this doesn't have yet;
     // ui_nav_create()'s own demo value is left alone rather than faked with
     // a real-looking number that isn't.
-    ui_nav_t *nav_ui = ui_nav();
-    if (nav_ui && s_battery_have) ui_status_set_battery(&nav_ui->status, s_battery_pct);
+    ui_nav_t *nav_ui = nav_status_ui;   // status bar already fed above
     double dest_lat, dest_lon;
     if (nav_ui && ui_is_navigating() && st.latlon_valid &&
         ui_get_destination(&dest_lat, &dest_lon)) {
@@ -721,20 +737,9 @@ static void tick(void)
         ui_settings_set_footer(set_ui, "Tab5 | FW 1.4.2 | SN 0A31-7742", line2);
     }
 
-    // ---- Map/Goto: battery only ---------------------------------------------
-    // Neither screen is otherwise touched by this tick() -- Map runs its own
-    // native drag/zoom loop and Goto its own local input handling, so
-    // fix/sats/clock on their status bars are a separate, pre-existing gap
-    // (same demo values ui_map_create()/ui_goto_create() seed at boot).
-    // Battery is a single global value, not screen-specific logic, so it's
-    // cheap to make real here too rather than leaving it the one screen (of
-    // six) still showing a frozen number.
-    if (s_battery_have) {
-        ui_map_t *m = ui_map();
-        if (m) ui_status_set_battery(&m->status, s_battery_pct);
-        ui_goto_t *g = ui_goto();
-        if (g) ui_status_set_battery(&g->status, s_battery_pct);
-    }
+    // Map/Goto have nothing else to update here -- Map runs its own native
+    // drag/zoom loop and Goto its own local input handling. Their status
+    // bars are fed with everyone else's up at the top of this function.
 
     lvgl_port_unlock();
 }
