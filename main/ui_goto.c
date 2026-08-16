@@ -10,6 +10,64 @@ static const char *keys[12] = { "1","2","3","4","5","6","7","8","9",
 
 /* ------------------------------------------------------------------ helpers */
 
+// Live, format-aware rendering of whatever's been typed so far -- e.g. lat
+// digits "329642" under DD MM.MMMM shows as "32\xC2\xB0 96.42'" while still
+// mid-entry. This is what parse_field() (further down) has always
+// interpreted the raw digit buffer AS, it just never showed up anywhere
+// before: switching the format buttons looked like it did nothing, and
+// DD.DDDDDD's decimal point -- always positionally implied, no literal '.'
+// keypress needed or possible on this keypad -- never appeared either, so
+// it read as "no way to enter decimal degrees" even though the fixed-width
+// digit convention already produces exactly that once parsed. Segment
+// widths here must match parse_field()'s layout exactly; kept as a second
+// hardcoded `deg_w` rather than sharing one, same as that function already
+// duplicates it from nowhere else -- there's no third place that needs it.
+static void format_entry_preview(const char *digits, ui_coord_fmt_t fmt, bool is_lat,
+                                 char *out, size_t out_size)
+{
+    if (digits[0] == '\0') {
+        lv_snprintf(out, out_size, "--");
+        return;
+    }
+
+    int deg_w = is_lat ? 2 : 3;
+    int seg_w[3];
+    const char *seg_punct[3];
+    int nseg;
+    if (fmt == UI_COORD_DD) {
+        seg_w[0] = deg_w; seg_punct[0] = ".";
+        seg_w[1] = 6;     seg_punct[1] = "\xC2\xB0";           /* deg sign */
+        nseg = 2;
+    } else if (fmt == UI_COORD_DDM) {
+        seg_w[0] = deg_w; seg_punct[0] = "\xC2\xB0 ";
+        seg_w[1] = 2;     seg_punct[1] = ".";
+        seg_w[2] = 4;     seg_punct[2] = "'";
+        nseg = 3;
+    } else { // UI_COORD_DMS
+        seg_w[0] = deg_w; seg_punct[0] = "\xC2\xB0 ";
+        seg_w[1] = 2;     seg_punct[1] = "' ";
+        seg_w[2] = 2;     seg_punct[2] = "\"";
+        nseg = 3;
+    }
+
+    size_t n = strlen(digits);
+    size_t pos = 0, o = 0;
+    for (int s = 0; s < nseg && pos < n && o + 1 < out_size; s++) {
+        int avail = (int)(n - pos);
+        int take = avail < seg_w[s] ? avail : seg_w[s];
+        for (int i = 0; i < take && o + 1 < out_size; i++) out[o++] = digits[pos + (size_t)i];
+        pos += (size_t)take;
+        // Punctuation for this segment only lands once it's fully typed --
+        // a segment still mid-entry (e.g. one digit into a 2-digit minutes
+        // field) shows bare, no trailing symbol yet.
+        if (take == seg_w[s]) {
+            size_t plen = strlen(seg_punct[s]);
+            if (o + plen < out_size) { memcpy(out + o, seg_punct[s], plen); o += plen; }
+        }
+    }
+    out[o] = '\0';
+}
+
 static void refresh_fields(ui_goto_t *g)
 {
     bool lat = (g->active == UI_GOTO_FIELD_LAT);
@@ -17,8 +75,13 @@ static void refresh_fields(ui_goto_t *g)
     lv_obj_set_style_border_color(g->lon_card, lat ? UI_C_BORDER : UI_C_BLUE, 0);
     lv_obj_set_style_text_color(g->lat_value, lat ? UI_C_TEXT : UI_C_TEXT_2, 0);
     lv_obj_set_style_text_color(g->lon_value, lat ? UI_C_TEXT_2 : UI_C_TEXT, 0);
-    lv_label_set_text(g->lat_value, g->lat_buf);
-    lv_label_set_text(g->lon_value, g->lon_buf);
+
+    char lat_disp[32], lon_disp[32];
+    format_entry_preview(g->lat_buf, g->fmt, true,  lat_disp, sizeof(lat_disp));
+    format_entry_preview(g->lon_buf, g->fmt, false, lon_disp, sizeof(lon_disp));
+    lv_label_set_text(g->lat_value, lat_disp);
+    lv_label_set_text(g->lon_value, lon_disp);
+
     lv_label_set_text(g->lat_hemi, g->lat_north ? "N" : "S");
     lv_label_set_text(g->lon_hemi, g->lon_east ? "E" : "W");
 }
@@ -517,6 +580,10 @@ void ui_goto_set_format(ui_goto_t *g, ui_coord_fmt_t fmt)
         lv_obj_set_style_text_color(lv_obj_get_child(g->fmt_btn[i], 0),
                                     on ? UI_C_BLUE : UI_C_MUTED, 0);
     }
+    // Re-render whatever's already typed under the new format's punctuation
+    // -- previously this only restyled the buttons themselves, so picking a
+    // different format looked like it did nothing to the value underneath.
+    refresh_fields(g);
 }
 
 void ui_goto_set_field(ui_goto_t *g, ui_goto_field_t field)
