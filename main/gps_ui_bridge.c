@@ -267,6 +267,23 @@ static float bearing_deg(double lat1, double lon1, double lat2, double lon2)
     return (float)fmod(theta + 360.0, 360.0);
 }
 
+// Cross-track error, statute miles: how far the current position (3) is
+// off the direct great-circle course from the leg's origin (1) to its
+// destination (2). Positive = right of course, negative = left -- matches
+// ui_nav_set_cross_track()'s offset convention directly, no sign flip
+// needed at the call site. Standard cross-track-distance formula, reusing
+// haversine_miles()/bearing_deg() above rather than a separate trig path:
+//   XTE = asin(sin(d13/R) * sin(theta13 - theta12)) * R
+static float cross_track_miles(double olat, double olon, double dlat, double dlon,
+                                double plat, double plon)
+{
+    const double r_mi = 3958.8;
+    double d13     = (double)haversine_miles(olat, olon, plat, plon);
+    double theta13 = (double)bearing_deg(olat, olon, plat, plon) * (GPS_UI_PI / 180.0);
+    double theta12 = (double)bearing_deg(olat, olon, dlat, dlon) * (GPS_UI_PI / 180.0);
+    return (float)(asin(sin(d13 / r_mi) * sin(theta13 - theta12)) * r_mi);
+}
+
 // Telemetry's (and now Home's, see ui_home_set_trip() below) trip/max-speed/
 // moving-time/elevation-gain accumulator. Session-only until
 // gps_ui_bridge_reset_trip() is called (wired to Home's Reset Trip button,
@@ -302,6 +319,28 @@ static float s_vspeed_fpm_ema;
 static int  s_battery_tick;
 static bool s_battery_have;
 static int  s_battery_pct;
+
+// Cross-track's leg origin -- the position navigation *started* from,
+// which is what defines the course line XTE is measured against. Armed on
+// the ui_is_navigating() false->true edge and latched on the first tick
+// with a valid fix after that, since there may not be one at the exact
+// moment "Start Navigation" is tapped. Cleared implicitly by the next arm
+// (s_leg_have goes false again), not on Stop -- Stop just leaves the Nav
+// screen showing whatever it last showed, same as every other card here.
+static bool   s_was_navigating;
+static bool   s_leg_armed;
+static bool   s_leg_have;
+static double s_leg_lat, s_leg_lon;
+
+// Smooths "closing"/"opening" (is |XTE| trending back toward the course
+// line) against 2Hz GPS jitter -- compares this tick's |XTE| to last
+// tick's with a small dead-band, holding the previous verdict inside the
+// dead-band rather than flipping on noise. Reset alongside the leg origin
+// so a brand new leg doesn't compare against the previous one's stale
+// magnitude.
+static bool  s_xte_have_prev;
+static float s_xte_prev_abs;
+static bool  s_xte_closing;
 
 // Every field in the status bar is a global value -- fix state, sat count,
 // local time, battery -- none of it is screen-specific, so every screen's
@@ -343,6 +382,16 @@ static void tick(void)
         s_battery_tick = 0;
         s_battery_have = battery_get_percent(&s_battery_pct);
     }
+
+    // Cross-track leg-origin arming -- see s_leg_armed's own comment. Runs
+    // every tick regardless of fix state, so the false->true edge is never
+    // missed even if navigation starts with no fix yet.
+    bool navigating_now = ui_is_navigating();
+    if (navigating_now && !s_was_navigating) {
+        s_leg_armed = true;
+        s_leg_have  = false;
+    }
+    s_was_navigating = navigating_now;
 
     if (!lvgl_port_lock(50)) return;
 
@@ -605,13 +654,9 @@ static void tick(void)
     // ---- Nav screen (active navigation) ------------------------------------
     // Goto/Nav went from decorative to real (see design_ui.c's goto_start_cb(),
     // which wires ui_goto_parse() into ui_set_destination()) -- distance/
-    // bearing/closure/ETA computed fresh every tick from the live position
-    // and whatever destination was set when "Start Navigation" was tapped.
-    // Cross-track (how far off the direct course line) is still the one
-    // card here not computed -- it needs the position navigation started
-    // from to define that line, state this doesn't keep yet. Left on
-    // ui_nav_create()'s demo value rather than faked with a real-looking
-    // number that isn't.
+    // bearing/closure/ETA/cross-track computed fresh every tick from the
+    // live position, whatever destination was set when "Start Navigation"
+    // was tapped, and (for cross-track) the leg origin latched above.
     ui_nav_t *nav_ui = nav_status_ui;   // status bar already fed above
     double dest_lat, dest_lon;
     // Gated on `fix`, not just latlon_valid -- the latter is sticky in
@@ -624,6 +669,19 @@ static void tick(void)
     if (nav_active && (!fix || !st.latlon_valid)) {
         ui_nav_set_stale(nav_ui);
     } else if (nav_active) {
+        // Latch the cross-track leg origin on the first valid fix after
+        // arming (see s_leg_armed's own comment) -- exactly here, not
+        // earlier, because this is the first point in the tick where a
+        // fix AND a destination are both known to be good.
+        if (s_leg_armed) {
+            s_leg_lat = st.latitude_deg;
+            s_leg_lon = st.longitude_deg;
+            s_leg_have = true;
+            s_leg_armed = false;
+            s_xte_have_prev = false;
+            s_xte_closing = true;
+        }
+
         float dist_mi = haversine_miles(st.latitude_deg, st.longitude_deg, dest_lat, dest_lon);
         float brg = bearing_deg(st.latitude_deg, st.longitude_deg, dest_lat, dest_lon);
         int heading = (int)(st.heading_deg + 0.5f);
@@ -689,6 +747,38 @@ static void tick(void)
             ui_nav_set_eta(nav_ui, eta_text, time_to_go);
         } else {
             ui_nav_set_eta(nav_ui, "--:--", "--:--");
+        }
+
+        // Cross track -- needs the leg origin latched above in addition to
+        // the live fix and destination already required by nav_active.
+        // The degenerate origin==destination check guards a leg that
+        // latched while already standing on the destination: bearing_deg()
+        // returns a defined-but-meaningless 0 deg for that (atan2(0,0)),
+        // and there's no course line to be off of in the first place.
+        bool xte_ready = s_leg_have &&
+                         (s_leg_lat != dest_lat || s_leg_lon != dest_lon);
+        if (xte_ready) {
+            float xte_mi = cross_track_miles(s_leg_lat, s_leg_lon, dest_lat, dest_lon,
+                                             st.latitude_deg, st.longitude_deg);
+            float xte_abs = xte_mi < 0.0f ? -xte_mi : xte_mi;
+
+            const float deadband_mi = 0.005f;
+            if (s_xte_have_prev) {
+                float delta = xte_abs - s_xte_prev_abs;
+                if (delta > deadband_mi)       s_xte_closing = false;
+                else if (delta < -deadband_mi) s_xte_closing = true;
+                // else: inside the dead-band, hold the previous verdict.
+            }
+            s_xte_prev_abs = xte_abs;
+            s_xte_have_prev = true;
+
+            float full_scale_mi = 0.5f;
+            ui_nav_set_cross_track(nav_ui, conv_dist_mi(xte_mi, dist_km),
+                                   dist_unit_str(dist_km),
+                                   conv_dist_mi(full_scale_mi, dist_km),
+                                   s_xte_closing, true);
+        } else {
+            ui_nav_set_cross_track(nav_ui, 0.0f, dist_unit_str(dist_km), 0.5f, true, false);
         }
     }
 

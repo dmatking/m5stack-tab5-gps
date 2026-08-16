@@ -192,11 +192,11 @@ ui_nav_t *ui_nav_create(lv_event_cb_t tab_cb)
 
     /* cross track ---------------------------------------------------------- */
     lv_obj_t *xtk = ui_card(body);
-    // Still fake -- every other card on this screen is real now (see their
-    // own comments), but cross-track (how far off the direct course line)
-    // needs the position navigation *started* from to define that line,
-    // state gps_ui_bridge.c doesn't keep yet. Not attempted here.
-    ui_mark_placeholder(xtk);
+    // Real now, like every other card on this screen -- gps_ui_bridge.c
+    // latches the leg origin (the position navigation *started* from) on
+    // the first valid fix after "Start Navigation", which is what defines
+    // the course line this is measured against. Shows "--" (valid=false,
+    // see ui_nav_set_cross_track()) until that origin exists.
     lv_obj_set_width(xtk, LV_PCT(100));
     lv_obj_set_height(xtk, LV_SIZE_CONTENT);
     lv_obj_set_style_pad_hor(xtk, 20, 0);
@@ -242,9 +242,9 @@ ui_nav_t *ui_nav_create(lv_event_cb_t tab_cb)
     ui_flex_row(xscale, 0);
     lv_obj_set_flex_align(xscale, LV_FLEX_ALIGN_SPACE_BETWEEN,
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    ui_label(xscale, "0.5 L", ui_font.xs, UI_C_DIM);
+    n->xtk_scale_l = ui_label(xscale, "0.5 mi L", ui_font.xs, UI_C_DIM);
     ui_label(xscale, "on track", ui_font.xs, UI_C_DIM);
-    ui_label(xscale, "0.5 R", ui_font.xs, UI_C_DIM);
+    n->xtk_scale_r = ui_label(xscale, "0.5 mi R", ui_font.xs, UI_C_DIM);
 
     /* footer --------------------------------------------------------------- */
     lv_obj_t *spacer = ui_box(body);
@@ -268,7 +268,7 @@ ui_nav_t *ui_nav_create(lv_event_cb_t tab_cb)
     ui_navbar_create(scr, UI_TAB_NAV, tab_cb);
 
     ui_nav_set_bearing(n, 94, 67, true);
-    ui_nav_set_cross_track(n, -0.12f, true);
+    ui_nav_set_cross_track(n, -0.12f, "mi", 0.5f, true, true);
     return n;
 }
 
@@ -365,6 +365,7 @@ void ui_nav_set_stale(ui_nav_t *n)
     lv_label_set_text(n->speed, "--");
     ui_nav_set_closure_unknown(n);
     ui_nav_set_eta(n, "--:--", "--:--");
+    ui_nav_set_cross_track(n, 0.0f, "mi", 0.5f, true, false);
 }
 
 void ui_nav_set_distance(ui_nav_t *n, float distance, const char *unit)
@@ -398,40 +399,56 @@ void ui_nav_set_speed(ui_nav_t *n, float speed, const char *unit)
     if (unit) lv_label_set_text(n->speed_unit, unit);
 }
 
-void ui_nav_set_cross_track(ui_nav_t *n, float offset_mi, bool closing)
+void ui_nav_set_cross_track(ui_nav_t *n, float offset, const char *unit,
+                            float full_scale, bool closing, bool valid)
 {
     if (!n) return;
+    if (!unit) unit = "mi";
 
-    float clamped = offset_mi;
-    if (clamped >  0.5f) clamped =  0.5f;
-    if (clamped < -0.5f) clamped = -0.5f;
+    if (!valid) {
+        // No leg origin latched yet (just started, or hasn't had a fix
+        // since) -- nothing honest to show. Centre the dot rather than
+        // leaving it wherever the last real leg left it, same "parked, not
+        // stale" convention as the relative-bearing arrow when heading is
+        // invalid (see ui_nav_set_bearing()).
+        lv_label_set_text(n->xtk_label, "-- | no track yet");
+        lv_obj_set_style_text_color(n->xtk_label, UI_C_MUTED, 0);
+        lv_obj_align(n->xtk_dot, LV_ALIGN_CENTER, 0, 0);
+        lv_obj_set_style_bg_color(n->xtk_dot, UI_C_MUTED, 0);
+        return;
+    }
+
+    if (full_scale <= 0.0f) full_scale = 0.5f;   // guard a bad caller
+
+    float clamped = offset;
+    if (clamped >  full_scale) clamped =  full_scale;
+    if (clamped < -full_scale) clamped = -full_scale;
 
     lv_coord_t w = lv_obj_get_width(n->xtk_track);
     if (w <= 0) w = UI_SCREEN_W - 2 * UI_PAD_SIDE - 40;
     lv_obj_align(n->xtk_dot, LV_ALIGN_CENTER,
-                 (lv_coord_t)(clamped / 0.5f * (w / 2 - 11)), 0);
+                 (lv_coord_t)(clamped / full_scale * (w / 2 - 11)), 0);
 
-    float mag = offset_mi < 0 ? -offset_mi : offset_mi;
-    // Format the float separately, then assemble with %s-only args --
-    // confirmed on real hardware that mixing a %f/%.2f spec with %s specs
-    // in the same lv_label_set_text_fmt() call corrupts the later %s
-    // pointers (crashed inside LVGL's builtin lv_vsnprintf_inner ->
-    // lv_strnlen on a garbage ~0xe0000000 address, addr2line-confirmed).
-    // Root cause since confirmed (see sdkconfig.defaults' CONFIG_LV_USE_FLOAT
-    // comment): CONFIG_LV_USE_FLOAT was off, which compiles the entire "%f"
-    // case out of LVGL's builtin sprintf -- the float argument never got
-    // consumed from the va_list at all, so the %s right after it read the
-    // wrong (garbage-pointer) slot. Now fixed at the root for every OTHER
-    // %f call in the UI; this one's left exactly as-is since it's harmless
-    // and already proven correct, not worth unwinding for its own sake.
-    char mag_buf[16];
+    float mag = offset < 0 ? -offset : offset;
+    // Format floats separately, then assemble with %s-only args -- see
+    // this function's git history for why: mixing a %f/%.2f spec with %s
+    // specs in the same lv_label_set_text_fmt() call used to corrupt the
+    // later %s pointers under a now-fixed root cause (CONFIG_LV_USE_FLOAT
+    // was off). Kept as the established pattern for this label rather than
+    // switched over, not because it's still required.
+    char mag_buf[16], scale_buf[16];
     snprintf(mag_buf, sizeof(mag_buf), "%.2f", mag);
-    lv_label_set_text_fmt(n->xtk_label, "%s mi %s | %s", mag_buf,
-                          offset_mi < 0 ? "left" : "right",
+    lv_label_set_text_fmt(n->xtk_label, "%s %s %s | %s", mag_buf, unit,
+                          offset < 0 ? "left" : "right",
                           closing ? "closing" : "opening");
     lv_obj_set_style_text_color(n->xtk_label, closing ? UI_C_GREEN : UI_C_RED, 0);
     lv_obj_set_style_bg_color(n->xtk_dot,
-                              mag <= 0.25f ? UI_C_GREEN : UI_C_RED, 0);
+                              mag <= full_scale * 0.5f ? UI_C_GREEN : UI_C_RED, 0);
+
+    snprintf(scale_buf, sizeof(scale_buf), "%.1f %s L", full_scale, unit);
+    lv_label_set_text(n->xtk_scale_l, scale_buf);
+    snprintf(scale_buf, sizeof(scale_buf), "%.1f %s R", full_scale, unit);
+    lv_label_set_text(n->xtk_scale_r, scale_buf);
 }
 
 void ui_nav_set_buttons(ui_nav_t *n, lv_event_cb_t map_cb, lv_event_cb_t stop_cb)
