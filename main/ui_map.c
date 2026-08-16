@@ -68,7 +68,7 @@ ui_map_t *ui_map_create(lv_event_cb_t tab_cb)
     ui_flex_col(scr, 0);
     m->screen = scr;
 
-    ui_status_create(scr, &m->status, true);
+    ui_status_create(scr, &m->status);
 
     /* map viewport ------------------------------------------------------- */
     lv_obj_t *holder = ui_box(scr);

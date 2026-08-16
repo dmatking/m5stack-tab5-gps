@@ -114,7 +114,7 @@ ui_goto_t *ui_goto_create(lv_event_cb_t tab_cb)
     ui_flex_col(scr, 0);
     g->screen = scr;
 
-    ui_status_create(scr, &g->status, true);
+    ui_status_create(scr, &g->status);
 
     lv_obj_t *body = ui_box(scr);
     lv_obj_set_width(body, LV_PCT(100));

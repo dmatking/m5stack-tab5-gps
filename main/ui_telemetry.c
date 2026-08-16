@@ -90,7 +90,7 @@ ui_telemetry_t *ui_telemetry_create(lv_event_cb_t tab_cb)
     ui_flex_col(scr, 0);
     t->screen = scr;
 
-    ui_status_create(scr, &t->status, true);
+    ui_status_create(scr, &t->status);
 
     lv_obj_t *body = ui_box(scr);
     lv_obj_set_width(body, LV_PCT(100));

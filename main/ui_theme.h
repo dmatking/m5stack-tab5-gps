@@ -94,7 +94,10 @@ LV_FONT_DECLARE(ui_font_bold_86)   /* Bold 86px, digits subset */
 #define UI_PAD_SIDE     20
 #define UI_GAP          11
 #define UI_RADIUS       18
-#define UI_STATUS_H    109
+/* One height for every screen's status bar now -- was 109 for Home's
+ * two-row variant vs. a hardcoded 66 for everyone else's single row, until
+ * the two-row variant was removed (see ui_common.h's ui_status_create()). */
+#define UI_STATUS_H     66
 #define UI_NAVBAR_H    116
 
 /* ---- font table (resolved in ui_theme_init) ---------------------------- */

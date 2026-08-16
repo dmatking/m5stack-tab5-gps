@@ -178,7 +178,7 @@ ui_home_t *ui_home_create(lv_event_cb_t tab_cb)
     ui_flex_col(scr, 0);
     h->screen = scr;
 
-    ui_status_create(scr, &h->status, false);
+    ui_status_create(scr, &h->status);
 
     /* content column ----------------------------------------------------- */
     lv_obj_t *body = ui_box(scr);

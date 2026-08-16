@@ -341,7 +341,7 @@ static void tick(void)
     }
 
     ui_status_set_fix(&h->status, fix ? "GPS FIX" : "NO FIX", fix);
-    ui_status_set_sats(&h->status, st.sats_in_use, st.hdop_valid ? st.hdop : 0.0f);
+    ui_status_set_sats(&h->status, st.sats_in_use);
 
     // US Central time, not UTC -- this project's users are all in one
     // place, so showing raw UTC (technically simpler, but requires doing
@@ -426,7 +426,7 @@ static void tick(void)
     if (t) {
         if (s_battery_have) ui_status_set_battery(&t->status, s_battery_pct);
         ui_status_set_fix(&t->status, fix ? "GPS FIX" : "NO FIX", fix);
-        ui_status_set_sats(&t->status, st.sats_in_use, st.hdop_valid ? st.hdop : 0.0f);
+        ui_status_set_sats(&t->status, st.sats_in_use);
         if (have_local) {
             char time_part[16], clock_buf[24];
             format_clock(time_part, sizeof(time_part), local_tm.tm_hour, local_tm.tm_min, 0, false);

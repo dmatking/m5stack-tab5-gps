@@ -25,18 +25,32 @@ typedef struct {
     lv_obj_t *fix;      /* "GPS FIX"            */
     lv_obj_t *dot;      /* fix indicator dot    */
     lv_obj_t *sats;     /* "14 sats"            */
-    lv_obj_t *hdop;     /* "HDOP 0.8"           */
     lv_obj_t *clock;    /* "10:24 AM"           */
     lv_obj_t *batt;     /* "87%"                */
-    lv_obj_t *batt_fill;
 } ui_status_t;
 
-/* Two-row status header (as on 2A Home). Pass compact = true for the
- * single-row variant used on Map / Nav / Telemetry / Goto. */
-void ui_status_create(lv_obj_t *parent, ui_status_t *out, bool compact);
+/* Single-row status header, identical on every screen: fix dot + fix text +
+ * sat count on the left, clock + battery on the right.
+ *
+ * Used to take a `compact` flag choosing between this and a taller two-row
+ * variant (second row: sat count, HDOP, a battery glyph). That variant is
+ * gone -- its second row never actually rendered on Home, the only screen
+ * that used it, and the one-row version never rendered *at all* on Map /
+ * Nav / Telemetry / Goto. Both failures traced to the same thing: the row
+ * was a nested LV_SIZE_CONTENT flex container inside this root, and its
+ * content landed ~54px below where the layout math put it, so it fell
+ * outside the root's own clip box (fully at 66px, second-row-only at
+ * 109px). Building the row directly in root -- no intermediate container --
+ * is the same flattening that fixed Settings' hand-rolled header, which had
+ * a nested SIZE_CONTENT row of its own and garbled its clock the moment it
+ * started updating. See ui_settings.c's header for that precedent. */
+void ui_status_create(lv_obj_t *parent, ui_status_t *out);
 
 void ui_status_set_fix(ui_status_t *s, const char *fix_text, bool good);
-void ui_status_set_sats(ui_status_t *s, int in_solution, float hdop);
+// HDOP dropped along with the two-row variant (see ui_status_create()) --
+// it's still shown where it's actually useful: Telemetry's own HDOP card,
+// and Home's GPS ACCURACY card, which derives feet/meters from it.
+void ui_status_set_sats(ui_status_t *s, int in_solution);
 void ui_status_set_clock(ui_status_t *s, const char *clock_text);
 void ui_status_set_battery(ui_status_t *s, int percent);
 

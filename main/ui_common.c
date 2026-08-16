@@ -2,94 +2,36 @@
 
 /* ------------------------------------------------------------------ status */
 
-static lv_obj_t *sep(lv_obj_t *parent)
+void ui_status_create(lv_obj_t *parent, ui_status_t *out)
 {
-    lv_obj_t *s = ui_box(parent);
-    lv_obj_set_size(s, 1, 26);
-    lv_obj_set_style_bg_color(s, UI_C_BORDER, 0);
-    lv_obj_set_style_bg_opa(s, LV_OPA_COVER, 0);
-    return s;
-}
-
-void ui_status_create(lv_obj_t *parent, ui_status_t *out, bool compact)
-{
+    // Flat: root IS the row. No intermediate LV_SIZE_CONTENT flex container
+    // between root and the labels -- that nesting is exactly what kept this
+    // bar from ever rendering on the 66px screens (see ui_common.h's own
+    // comment on this function for the full history). Vertical centering
+    // comes from the cross-axis align below rather than top/bottom padding,
+    // so there's no height arithmetic to get wrong either.
     lv_obj_t *root = ui_box(parent);
-    lv_obj_set_size(root, LV_PCT(100), compact ? 66 : UI_STATUS_H);
+    lv_obj_set_size(root, LV_PCT(100), UI_STATUS_H);
     lv_obj_set_style_pad_hor(root, 22, 0);
-    lv_obj_set_style_pad_top(root, 16, 0);
-    lv_obj_set_style_pad_bottom(root, 12, 0);
-    ui_flex_col(root, 10);
+    ui_flex_row(root, 12);
+    lv_obj_set_flex_align(root, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
     out->root = root;
 
-    /* row 1 --------------------------------------------------------------- */
-    lv_obj_t *r1 = ui_box(root);
-    lv_obj_set_size(r1, LV_PCT(100), LV_SIZE_CONTENT);
-    ui_flex_row(r1, 12);
-    lv_obj_set_flex_align(r1, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_CENTER);
-
-    out->dot = ui_box(r1);
+    out->dot = ui_box(root);
     lv_obj_set_size(out->dot, 20, 20);
     lv_obj_set_style_radius(out->dot, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_bg_color(out->dot, UI_C_GREEN, 0);
     lv_obj_set_style_bg_opa(out->dot, LV_OPA_COVER, 0);
 
-    out->fix = ui_label(r1, "GPS FIX", ui_font.semi_m, UI_C_GREEN);
+    out->fix  = ui_label(root, "GPS FIX", ui_font.semi_m, UI_C_GREEN);
+    out->sats = ui_label(root, "14 sats", ui_font.s, UI_C_MUTED);
 
-    if (compact) {
-        out->sats = ui_label(r1, "14 sats", ui_font.s, UI_C_MUTED);
-        out->hdop = NULL;
-    }
-
-    lv_obj_t *spacer = ui_box(r1);
+    lv_obj_t *spacer = ui_box(root);
     lv_obj_set_flex_grow(spacer, 1);
 
-    out->clock = ui_label(r1, "10:24 AM", ui_font.s, UI_C_TEXT);
-    if (compact) {
-        out->batt = ui_label(r1, "87%", ui_font.s, UI_C_GREEN);
-        out->batt_fill = NULL;
-        return;
-    }
-
-    /* row 2 (full header only): sats | HDOP | battery -------------------- */
-    lv_obj_t *r2 = ui_box(root);
-    lv_obj_set_size(r2, LV_PCT(100), LV_SIZE_CONTENT);
-    ui_flex_row(r2, 10);
-    lv_obj_set_flex_align(r2, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_CENTER);
-
-    lv_obj_t *g1 = ui_box(r2);
-    lv_obj_set_size(g1, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    ui_flex_row(g1, 10);
-    lv_obj_set_flex_align(g1, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_CENTER);
-    ui_label(g1, LV_SYMBOL_GPS, ui_font.s, UI_C_MUTED);
-    out->sats = ui_label(g1, "14 sats", ui_font.s, UI_C_MUTED);
-
-    sep(r2);
-
-    out->hdop = ui_label(r2, "HDOP 0.8", ui_font.s, UI_C_MUTED);
-
-    sep(r2);
-
-    lv_obj_t *g3 = ui_box(r2);
-    lv_obj_set_size(g3, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    ui_flex_row(g3, 10);
-    lv_obj_set_flex_align(g3, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_CENTER);
-
-    lv_obj_t *shell = ui_box(g3);           /* battery glyph */
-    lv_obj_set_size(shell, 40, 22);
-    lv_obj_set_style_radius(shell, 4, 0);
-    lv_obj_set_style_border_color(shell, UI_C_MUTED, 0);
-    lv_obj_set_style_border_width(shell, 2, 0);
-    lv_obj_set_style_pad_all(shell, 3, 0);
-    out->batt_fill = ui_box(shell);
-    lv_obj_set_size(out->batt_fill, LV_PCT(87), LV_PCT(100));
-    lv_obj_set_style_bg_color(out->batt_fill, UI_C_GREEN, 0);
-    lv_obj_set_style_bg_opa(out->batt_fill, LV_OPA_COVER, 0);
-
-    out->batt = ui_label(g3, "87%", ui_font.s, UI_C_TEXT);
+    out->clock = ui_label(root, "10:24 AM", ui_font.s, UI_C_TEXT);
+    out->batt  = ui_label(root, "87%", ui_font.s, UI_C_GREEN);
 }
 
 void ui_status_set_fix(ui_status_t *s, const char *fix_text, bool good)
@@ -101,11 +43,10 @@ void ui_status_set_fix(ui_status_t *s, const char *fix_text, bool good)
     lv_obj_set_style_bg_color(s->dot, c, 0);
 }
 
-void ui_status_set_sats(ui_status_t *s, int in_solution, float hdop)
+void ui_status_set_sats(ui_status_t *s, int in_solution)
 {
     if (!s) return;
     if (s->sats) lv_label_set_text_fmt(s->sats, "%d sats", in_solution);
-    if (s->hdop) lv_label_set_text_fmt(s->hdop, "HDOP %.1f", hdop);
 }
 
 void ui_status_set_clock(ui_status_t *s, const char *clock_text)
@@ -115,15 +56,14 @@ void ui_status_set_clock(ui_status_t *s, const char *clock_text)
 
 void ui_status_set_battery(ui_status_t *s, int percent)
 {
-    if (!s) return;
+    if (!s || !s->batt) return;
     if (percent < 0)   percent = 0;
     if (percent > 100) percent = 100;
-    if (s->batt) lv_label_set_text_fmt(s->batt, "%d%%", percent);
-    if (s->batt_fill) {
-        lv_obj_set_width(s->batt_fill, LV_PCT(percent));
-        lv_obj_set_style_bg_color(s->batt_fill,
-                                  percent <= 15 ? UI_C_RED : UI_C_GREEN, 0);
-    }
+    lv_label_set_text_fmt(s->batt, "%d%%", percent);
+    // Red below 15%, same threshold the old two-row variant's battery-glyph
+    // fill used -- the glyph itself went away with that row, so the text
+    // color carries the low-battery warning now.
+    lv_obj_set_style_text_color(s->batt, percent <= 15 ? UI_C_RED : UI_C_GREEN, 0);
 }
 
 /* ------------------------------------------------------------------ navbar */
