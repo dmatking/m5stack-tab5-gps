@@ -135,6 +135,12 @@ static void refresh_fields(ui_goto_t *g)
     bool dd = (g->fmt == UI_COORD_DD);
     lv_label_set_text(g->lat_hemi, dd ? (g->lat_north ? "+" : "-") : (g->lat_north ? "N" : "S"));
     lv_label_set_text(g->lon_hemi, dd ? (g->lon_east  ? "+" : "-") : (g->lon_east  ? "E" : "W"));
+    // +/- reads noticeably smaller than a letter at the same point size
+    // (much less glyph ink), so it gets bumped a size up -- num_m is also
+    // bold, which reads as "chunkier" rather than just bigger. Badge box
+    // is 76x56, plenty of headroom for a single ~48px glyph either way.
+    lv_obj_set_style_text_font(g->lat_hemi, dd ? ui_font.num_m : ui_font.semi_m, 0);
+    lv_obj_set_style_text_font(g->lon_hemi, dd ? ui_font.num_m : ui_font.semi_m, 0);
 }
 
 /* Saved-list row actions. Set from design_ui.c, which owns the store. */
