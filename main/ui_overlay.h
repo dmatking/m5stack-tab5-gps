@@ -50,3 +50,14 @@ void ui_overlay_draw_navbar(void);
 // navbar's rows at all -- every touch down there resolves to *some* tab,
 // same "swallow the whole strip" convention as the zoom/home buttons.
 bool ui_overlay_hit_test_navbar(int16_t x, int16_t y, int *tab_out);
+
+// Draws the "you are here" marker at (sx, sy) -- LOGICAL screen coordinates,
+// already projected by the caller (map_view.c has pan_x/pan_y/zoom, this
+// file doesn't). valid=false (no fix, or no fix ever acquired) skips
+// drawing entirely rather than showing a marker at a stale or meaningless
+// position. Same call-site contract as ui_overlay_draw_zoom_buttons() --
+// call after a successful tile_cache_render_viewport(), before
+// board_lcd_commit(). Safe to pass a position outside the visible map
+// area (behind the status bar or navbar, or off-screen entirely) --
+// clipped to the same visible band tile compositing itself is clipped to.
+void ui_overlay_draw_position_marker(int sx, int sy, bool valid);

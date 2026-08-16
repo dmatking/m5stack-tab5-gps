@@ -307,6 +307,53 @@ bool ui_overlay_hit_test_home(int16_t x, int16_t y)
 }
 
 // ---------------------------------------------------------------------------
+// "You are here" marker -- same squared-distance circle-fill technique as
+// draw_ring_and_dot() above, just one filled disc (not a hollow ring) plus
+// a thin contrasting border so it reads against tile colors of either
+// lightness. Unlike the home button's fixed screen position, this one
+// moves every frame with the fix, so it's the caller's (map_view.c's) job
+// to project lat/lon into screen space -- this file only knows pixels.
+// ---------------------------------------------------------------------------
+
+static void draw_position_marker(uint8_t *fb, int nat_w, int nat_h, int cx, int cy)
+{
+    int outer = MAP_POS_MARKER_RADIUS;
+    int inner = outer - MAP_POS_MARKER_RING_THICKNESS;
+    int outer2 = outer * outer;
+    int inner2 = inner * inner;
+
+    for (int dy = -outer; dy <= outer; dy++) {
+        for (int dx = -outer; dx <= outer; dx++) {
+            int d2 = dx * dx + dy * dy;
+            if (d2 > outer2) continue;
+            uint16_t color = (d2 >= inner2) ? MAP_POS_MARKER_RING_RGB565 : MAP_POS_MARKER_FILL_RGB565;
+            set_logical_pixel(fb, nat_w, nat_h, cx + dx, cy + dy, color);
+        }
+    }
+}
+
+void ui_overlay_draw_position_marker(int sx, int sy, bool valid)
+{
+    if (!valid) return;
+
+    // Clip to the same visible band tile compositing itself is clipped to
+    // (MAP_STATUS_BAR_H at the top, MAP_NAVBAR_H at the bottom) -- those
+    // rows belong to the status bar/navbar exclusively; drawing into them
+    // would corrupt whatever they just drew. A position that happens to
+    // project into either strip (you're near the top/bottom edge of the
+    // current view) just doesn't show a marker that redraw, same as it
+    // wouldn't show map content there either.
+    int top = MAP_STATUS_BAR_H;
+    int bottom = MAP_LOGICAL_H - MAP_NAVBAR_H;
+    int r = MAP_POS_MARKER_RADIUS;
+    if (sx + r < 0 || sx - r >= MAP_LOGICAL_W || sy + r < top || sy - r >= bottom) return;
+
+    uint8_t *fb = board_lcd_hw_framebuffer();
+    if (!fb) return;
+    draw_position_marker(fb, board_lcd_width(), board_lcd_height(), sx, sy);
+}
+
+// ---------------------------------------------------------------------------
 // Tab navbar -- blits a real, LVGL-rendered snapshot of main/ui_common.c's
 // navbar (Map tab active, captured once at boot -- see navbar_snapshot.h)
 // instead of re-implementing font/icon rendering natively. An earlier
