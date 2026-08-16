@@ -64,6 +64,9 @@ typedef struct {
     lv_obj_t *btn_cancel;
     lv_obj_t *btn_start;
     lv_obj_t *btn_start_wrap;  /* hidden on the saved pane -- see ui_goto_set_tab() */
+    lv_obj_t *btn_save;
+    lv_obj_t *btn_save_label;  /* flashed with the save result, see ui_goto_flash_save() */
+    lv_obj_t *btn_save_wrap;   /* hidden on the saved pane, same as btn_start_wrap */
 
     ui_goto_field_t active;
     char lat_buf[20];
@@ -119,6 +122,18 @@ bool ui_goto_parse(ui_goto_t *g, double *out_lat, double *out_lon);
 /* Fires when "Start Navigation" is tapped. */
 void ui_goto_set_start_cb(ui_goto_t *g, lv_event_cb_t cb, void *user_data);
 void ui_goto_set_cancel_cb(ui_goto_t *g, lv_event_cb_t cb, void *user_data);
+
+// Fires when "Save" is tapped -- stores the typed coordinate as a waypoint
+// without navigating to it (the opposite of Start Navigation, which
+// navigates without saving). design_ui.c is expected to call
+// ui_goto_flash_save() from this callback with the outcome, same as Home's
+// Mark Position button flashes its own result.
+void ui_goto_set_save_cb(ui_goto_t *g, lv_event_cb_t cb, void *user_data);
+
+// Shows `text` on the Save button in place of "Save" for ~1.8s, then
+// reverts -- e.g. the new waypoint's name, or "Storage full". Mirrors
+// ui_home.c's ui_home_flash_mark() exactly (same timer pattern).
+void ui_goto_flash_save(ui_goto_t *g, const char *text);
 
 #ifdef __cplusplus
 }

@@ -430,6 +430,17 @@ ui_goto_t *ui_goto_create(lv_event_cb_t tab_cb)
     lv_obj_set_flex_grow(bl, 1);
     g->btn_cancel = ui_button(bl, "Cancel", UI_C_CARD, UI_C_MUTED, true,
                               UI_C_BORDER, 92);
+    // Save stores the typed coordinate as a waypoint without navigating to
+    // it -- Start Navigation does the opposite (navigates without saving).
+    // Green outline, distinct from Cancel's muted border and Start's
+    // filled blue -- green already reads "positive/confirming" elsewhere
+    // in this app (fix good, on-track cross-track dot).
+    lv_obj_t *sm = ui_box(btns);
+    g->btn_save_wrap = sm;
+    lv_obj_set_size(sm, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_grow(sm, 1);
+    g->btn_save = ui_button(sm, "Save", UI_C_CARD, UI_C_GREEN, true, UI_C_GREEN, 92);
+    g->btn_save_label = lv_obj_get_child(g->btn_save, 0);
     lv_obj_t *br = ui_box(btns);
     g->btn_start_wrap = br;
     lv_obj_set_size(br, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
@@ -486,14 +497,18 @@ void ui_goto_set_tab(ui_goto_t *g, bool saved)
     }
     update_saved_visibility(g);
 
-    // "Start Navigation" only belongs to the entry pane -- on the saved
-    // pane the coordinate fields are empty, so ui_goto_parse() would
-    // refuse and the button would sit there looking live while doing
-    // nothing. Rows are tap-to-navigate instead. Cancel stays on both (it
-    // just goes Home) and widens to fill the row.
+    // "Start Navigation" and "Save" only belong to the entry pane -- on
+    // the saved pane the coordinate fields are empty, so ui_goto_parse()
+    // would refuse and both buttons would sit there looking live while
+    // doing nothing. Rows are tap-to-navigate/trash-to-delete instead.
+    // Cancel stays on both (it just goes Home) and widens to fill the row.
     if (g->btn_start_wrap) {
         if (saved) lv_obj_add_flag(g->btn_start_wrap, LV_OBJ_FLAG_HIDDEN);
         else       lv_obj_remove_flag(g->btn_start_wrap, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (g->btn_save_wrap) {
+        if (saved) lv_obj_add_flag(g->btn_save_wrap, LV_OBJ_FLAG_HIDDEN);
+        else       lv_obj_remove_flag(g->btn_save_wrap, LV_OBJ_FLAG_HIDDEN);
     }
 
     // Selected tab is a filled blue pill, the other is bare. Matches how
@@ -821,4 +836,30 @@ void ui_goto_set_start_cb(ui_goto_t *g, lv_event_cb_t cb, void *user_data)
 void ui_goto_set_cancel_cb(ui_goto_t *g, lv_event_cb_t cb, void *user_data)
 {
     if (g && cb) lv_obj_add_event_cb(g->btn_cancel, cb, LV_EVENT_CLICKED, user_data);
+}
+
+void ui_goto_set_save_cb(ui_goto_t *g, lv_event_cb_t cb, void *user_data)
+{
+    if (g && cb) lv_obj_add_event_cb(g->btn_save, cb, LV_EVENT_CLICKED, user_data);
+}
+
+// Only one Save button ever exists, so a single file-static handle is
+// enough to track its restore timer -- exact same pattern as ui_home.c's
+// s_mark_restore_timer/mark_restore_cb for Mark Position.
+static lv_timer_t *s_save_restore_timer;
+
+static void save_restore_cb(lv_timer_t *t)
+{
+    ui_goto_t *g = (ui_goto_t *)lv_timer_get_user_data(t);
+    if (g && g->btn_save_label) lv_label_set_text(g->btn_save_label, "Save");
+    s_save_restore_timer = NULL;   // LVGL auto-deletes a repeat_count(1) timer
+}
+
+void ui_goto_flash_save(ui_goto_t *g, const char *text)
+{
+    if (!g || !g->btn_save_label || !text) return;
+    lv_label_set_text(g->btn_save_label, text);
+    if (s_save_restore_timer) lv_timer_delete(s_save_restore_timer);
+    s_save_restore_timer = lv_timer_create(save_restore_cb, 1800, g);
+    lv_timer_set_repeat_count(s_save_restore_timer, 1);
 }

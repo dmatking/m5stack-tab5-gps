@@ -97,6 +97,29 @@ void ui_goto_refresh_saved(void)
     ui_goto_saved_end(s_goto_p);
 }
 
+// "Save" on the entry pane -- stores the typed coordinate as a waypoint
+// without navigating to it, the opposite of goto_start_cb() above. Shares
+// ui_goto_parse() with it so the two actions can never disagree about
+// what a given typed value means, out-of-range refusal included (same
+// silent no-op as Start Navigation -- see goto_start_cb()'s comment).
+static void goto_save_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    double lat, lon;
+    if (!ui_goto_parse(s_goto_p, &lat, &lon)) return;
+    waypoint_t w;
+    const char *msg;
+    switch (waypoints_add(lat, lon, &w)) {
+    case WAYPOINTS_OK:        msg = w.name;         break;
+    case WAYPOINTS_ERR_FULL:  msg = "Storage full";  break;
+    default:                  msg = "Save failed";   break;
+    }
+    ui_goto_flash_save(s_goto_p, msg);
+    // New entry lands at index 0 -- refresh so the saved list/recent card
+    // reflect it immediately rather than waiting for the next ui_show_goto().
+    ui_goto_refresh_saved();
+}
+
 static void saved_go_cb(int index)
 {
     waypoint_t w;
@@ -201,6 +224,7 @@ void ui_init(void)
     ui_nav_set_buttons(s_nav_p, nav_map_cb, nav_stop_cb);
     ui_goto_set_start_cb(s_goto_p, goto_start_cb, NULL);
     ui_goto_set_cancel_cb(s_goto_p, goto_cancel_cb, NULL);
+    ui_goto_set_save_cb(s_goto_p, goto_save_cb, NULL);
     ui_goto_set_saved_cbs(s_goto_p, saved_go_cb, saved_del_cb);
     ui_goto_refresh_saved();
 
