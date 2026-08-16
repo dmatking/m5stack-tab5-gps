@@ -404,11 +404,11 @@ static void tick(void)
         ui_home_set_speed(h, conv_speed_mph(mph, dist_km), speed_unit_str(dist_km));
     }
 
-    // heading_deg comes from RMC and is only meaningful in motion -- GPS
-    // course-over-ground is noisy/undefined near zero speed. Shown
-    // regardless for now (matches gps.c not gating it either); revisit if
-    // it looks jittery standing still once there's a real heading to look at.
-    ui_home_set_heading(h, (int)(st.heading_deg + 0.5f), cardinal_8(st.heading_deg));
+    // Gated on heading_valid (gps.h) rather than shown unconditionally --
+    // GPS course-over-ground is noise at rest, so the compass now reads
+    // "---" standing still instead of a confident stale bearing.
+    ui_home_set_heading(h, (int)(st.heading_deg + 0.5f),
+                        cardinal_8(st.heading_deg), st.heading_valid);
 
     if (st.altitude_valid) {
         float alt_ft = st.altitude_m * 3.28084f;
@@ -606,46 +606,84 @@ static void tick(void)
     // which wires ui_goto_parse() into ui_set_destination()) -- distance/
     // bearing/closure/ETA computed fresh every tick from the live position
     // and whatever destination was set when "Start Navigation" was tapped.
-    // Cross-track (how far off the direct course line) deliberately NOT
-    // computed -- would need storing the position navigation started from
-    // to define that line, separate state this doesn't have yet;
-    // ui_nav_create()'s own demo value is left alone rather than faked with
-    // a real-looking number that isn't.
+    // Cross-track (how far off the direct course line) is still the one
+    // card here not computed -- it needs the position navigation started
+    // from to define that line, state this doesn't keep yet. Left on
+    // ui_nav_create()'s demo value rather than faked with a real-looking
+    // number that isn't.
     ui_nav_t *nav_ui = nav_status_ui;   // status bar already fed above
     double dest_lat, dest_lon;
-    if (nav_ui && ui_is_navigating() && st.latlon_valid &&
-        ui_get_destination(&dest_lat, &dest_lon)) {
+    // Gated on `fix`, not just latlon_valid -- the latter is sticky in
+    // gps.c (set on the first good sentence, never cleared), so on its own
+    // it would keep this whole block computing confident distances and
+    // bearings from a stale position long after signal was lost, directly
+    // under a status bar reading NO FIX.
+    bool nav_active = nav_ui && ui_is_navigating() &&
+                      ui_get_destination(&dest_lat, &dest_lon);
+    if (nav_active && (!fix || !st.latlon_valid)) {
+        ui_nav_set_stale(nav_ui);
+    } else if (nav_active) {
         float dist_mi = haversine_miles(st.latitude_deg, st.longitude_deg, dest_lat, dest_lon);
         float brg = bearing_deg(st.latitude_deg, st.longitude_deg, dest_lat, dest_lon);
         int heading = (int)(st.heading_deg + 0.5f);
         float nav_speed_mph = st.speed_valid ? st.speed_knots * 1.15078f : 0.0f;
 
-        ui_nav_set_bearing(nav_ui, (int)(brg + 0.5f), heading);
+        ui_nav_set_bearing(nav_ui, (int)(brg + 0.5f), heading, st.heading_valid);
         ui_nav_set_distance(nav_ui, conv_dist_mi(dist_mi, dist_km), dist_unit_str(dist_km));
         ui_nav_set_speed(nav_ui, conv_speed_mph(nav_speed_mph, dist_km), speed_unit_str(dist_km));
 
         // Velocity made good -- current speed projected onto the bearing
         // to the destination, so it reads near-zero/negative when moving
         // across or away from it instead of always showing full raw speed
-        // regardless of direction actually traveled.
-        float angle_diff = (float)((brg - heading) * (GPS_UI_PI / 180.0));
-        float vmg_mph = nav_speed_mph * cosf(angle_diff);
-        ui_nav_set_closure(nav_ui, conv_speed_mph(vmg_mph, dist_km), speed_unit_str(dist_km));
+        // regardless of direction actually traveled. Only computable with a
+        // real heading to project onto (gps.h's heading_valid): without one
+        // the cosine term is meaningless, and it feeds ETA/time-to-go too,
+        // so all three blank together rather than propagating the garbage.
+        bool vmg_valid = st.heading_valid && st.speed_valid;
+        float vmg_mph = 0.0f;
+        if (vmg_valid) {
+            float angle_diff = (float)((brg - heading) * (GPS_UI_PI / 180.0));
+            vmg_mph = nav_speed_mph * cosf(angle_diff);
+            ui_nav_set_closure(nav_ui, conv_speed_mph(vmg_mph, dist_km), speed_unit_str(dist_km));
+        } else {
+            ui_nav_set_closure_unknown(nav_ui);
+        }
 
-        if (vmg_mph > 0.5f) {
+        if (vmg_valid && vmg_mph > 0.5f) {
             float hours_to_go = dist_mi / vmg_mph;
-            uint32_t secs_to_go = (uint32_t)(hours_to_go * 3600.0f);
             char time_to_go[16];
-            snprintf(time_to_go, sizeof(time_to_go), "%u:%02u",
-                     (unsigned)(secs_to_go / 3600), (unsigned)((secs_to_go % 3600) / 60));
             char eta_text[16] = "--:--";
-            if (have_local) {
-                // Simple minutes-of-day add-and-wrap, same spirit as this
-                // file's other clock math -- fine for a same-day ETA
-                // display, not a real calendar-aware add.
-                int total_min = local_tm.tm_hour * 60 + local_tm.tm_min + (int)(hours_to_go * 60.0f);
-                total_min = ((total_min % 1440) + 1440) % 1440;
-                snprintf(eta_text, sizeof(eta_text), "%d:%02d", total_min / 60, total_min % 60);
+            // Past a day, BOTH of these stop meaning anything, so they
+            // degrade together rather than one of them quietly lying:
+            // time-to-go overflows a card laid out for "17:56" once the
+            // hour count goes 3 digits, and the ETA below is a same-day
+            // minutes-of-day wrap, so a 30-hour leg would render as a
+            // perfectly plausible time *today*.
+            //
+            // Written !(x < 24) rather than (x >= 24) deliberately: a NaN
+            // from a degenerate leg fails every comparison, so this form
+            // sends it down the ">24h" branch instead of letting it reach
+            // the cast below (float->uint32_t of a NaN is undefined).
+            if (!(hours_to_go < 24.0f)) {
+                lv_strlcpy(time_to_go, "> 24h", sizeof(time_to_go));
+            } else {
+                uint32_t secs_to_go = (uint32_t)(hours_to_go * 3600.0f);
+                snprintf(time_to_go, sizeof(time_to_go), "%u:%02u",
+                         (unsigned)(secs_to_go / 3600), (unsigned)((secs_to_go % 3600) / 60));
+                if (have_local) {
+                    // Simple minutes-of-day add-and-wrap, same spirit as
+                    // this file's other clock math -- fine for a same-day
+                    // ETA, not a real calendar-aware add (which is exactly
+                    // why the >=24h case above skips it). Formatted through
+                    // format_clock() so it honours the 12/24-hour setting
+                    // like every other clock in the app; it used to be a
+                    // bare "%d:%02d", the one holdout.
+                    int total_min = local_tm.tm_hour * 60 + local_tm.tm_min +
+                                    (int)(hours_to_go * 60.0f);
+                    total_min = ((total_min % 1440) + 1440) % 1440;
+                    format_clock(eta_text, sizeof(eta_text),
+                                 total_min / 60, total_min % 60, 0, false);
+                }
             }
             ui_nav_set_eta(nav_ui, eta_text, time_to_go);
         } else {

@@ -64,7 +64,9 @@ void ui_home_set_position(ui_home_t *h, const char *lat, const char *lon);
 // app_settings_get_elevation_m(); this screen just displays what it's given.
 void ui_home_set_accuracy(ui_home_t *h, float value, const char *unit);
 void ui_home_set_speed(ui_home_t *h, float speed, const char *unit);
-void ui_home_set_heading(ui_home_t *h, int deg, const char *cardinal);
+// valid == false (stationary, or no fix) shows "---"/"--" -- see gps.h's
+// heading_valid for why a GPS course-over-ground can't be trusted at rest.
+void ui_home_set_heading(ui_home_t *h, int deg, const char *cardinal, bool valid);
 void ui_home_set_altitude(ui_home_t *h, int altitude, const char *unit);
 void ui_home_set_satellites(ui_home_t *h, int count, const char *quality);
 // Despite the original design's card being captioned "TIME (UTC)", this

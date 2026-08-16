@@ -267,7 +267,7 @@ ui_nav_t *ui_nav_create(lv_event_cb_t tab_cb)
 
     ui_navbar_create(scr, UI_TAB_NAV, tab_cb);
 
-    ui_nav_set_bearing(n, 94, 67);
+    ui_nav_set_bearing(n, 94, 67, true);
     ui_nav_set_cross_track(n, -0.12f, true);
     return n;
 }
@@ -281,9 +281,25 @@ void ui_nav_set_destination(ui_nav_t *n, const char *name, const char *meta)
     if (meta) lv_label_set_text(n->dest_meta, meta);
 }
 
-void ui_nav_set_bearing(ui_nav_t *n, int bearing_deg, int heading_deg)
+void ui_nav_set_bearing(ui_nav_t *n, int bearing_deg, int heading_deg,
+                        bool heading_valid)
 {
     if (!n) return;
+
+    // BRG is computed from two positions and is always meaningful. HDG,
+    // the relative arrow, and TURN all depend on which way we're actually
+    // pointing, which GPS can't tell us at rest (gps.h's heading_valid) --
+    // so they blank rather than showing a stale direction. The arrow is
+    // parked straight up while invalid: a *relative* arrow at 0 reads as
+    // "no correction known", and leaving it wherever it last pointed would
+    // look like live guidance.
+    lv_label_set_text_fmt(n->brg, "BRG %03d\xC2\xB0", ((bearing_deg % 360) + 360) % 360);
+    if (!heading_valid) {
+        lv_label_set_text(n->hdg, "HDG ---\xC2\xB0");
+        lv_label_set_text(n->turn, "NO HEADING");
+        lv_obj_set_style_text_color(n->turn, UI_C_MUTED, 0);
+        heading_deg = bearing_deg;   // rel == 0 -> arrow points straight up
+    }
 
     int rel = ((bearing_deg - heading_deg) % 360 + 360) % 360;
     float a  = (float)rel * 3.14159265f / 180.0f;   /* 0 = straight ahead */
@@ -313,14 +329,42 @@ void ui_nav_set_bearing(ui_nav_t *n, int bearing_deg, int heading_deg)
         lv_line_set_points(side ? n->arrow_barb_r : n->arrow_barb_l, p, 2);
     }
 
-    lv_label_set_text_fmt(n->brg, "BRG %03d\xC2\xB0", ((bearing_deg % 360) + 360) % 360);
-    lv_label_set_text_fmt(n->hdg, "HDG %03d\xC2\xB0", ((heading_deg % 360) + 360) % 360);
+    // BRG was set above (it's valid either way). HDG/TURN only when there's
+    // a real heading to report -- see this function's own comment.
+    if (heading_valid) {
+        lv_label_set_text_fmt(n->hdg, "HDG %03d\xC2\xB0", ((heading_deg % 360) + 360) % 360);
 
-    int turn = rel > 180 ? 360 - rel : rel;
-    if (turn <= 2)      lv_label_set_text(n->turn, "ON COURSE");
-    else if (rel > 180) lv_label_set_text_fmt(n->turn, "TURN L %d\xC2\xB0", turn);
-    else                lv_label_set_text_fmt(n->turn, "TURN R %d\xC2\xB0", turn);
-    lv_obj_set_style_text_color(n->turn, turn <= 2 ? UI_C_GREEN : UI_C_BLUE, 0);
+        int turn = rel > 180 ? 360 - rel : rel;
+        if (turn <= 2)      lv_label_set_text(n->turn, "ON COURSE");
+        else if (rel > 180) lv_label_set_text_fmt(n->turn, "TURN L %d\xC2\xB0", turn);
+        else                lv_label_set_text_fmt(n->turn, "TURN R %d\xC2\xB0", turn);
+        lv_obj_set_style_text_color(n->turn, turn <= 2 ? UI_C_GREEN : UI_C_BLUE, 0);
+    }
+}
+
+void ui_nav_set_closure_unknown(ui_nav_t *n)
+{
+    if (!n) return;
+    lv_label_set_text(n->closure, "--");
+    lv_obj_set_style_text_color(n->closure, UI_C_MUTED, 0);
+}
+
+void ui_nav_set_stale(ui_nav_t *n)
+{
+    if (!n) return;
+    // No fix: every value here is derived from the current position, so
+    // there is nothing honest to show. Blanks rather than freezing the
+    // last-known numbers, which would be indistinguishable from live ones
+    // while the status bar right above says NO FIX. The destination
+    // name/meta stay -- that's what you asked for, not a measurement.
+    lv_label_set_text(n->brg, "BRG ---\xC2\xB0");
+    lv_label_set_text(n->hdg, "HDG ---\xC2\xB0");
+    lv_label_set_text(n->turn, "NO FIX");
+    lv_obj_set_style_text_color(n->turn, UI_C_RED, 0);
+    lv_label_set_text(n->distance, "--");
+    lv_label_set_text(n->speed, "--");
+    ui_nav_set_closure_unknown(n);
+    ui_nav_set_eta(n, "--:--", "--:--");
 }
 
 void ui_nav_set_distance(ui_nav_t *n, float distance, const char *unit)

@@ -67,6 +67,16 @@ typedef struct {
     double longitude_deg;   // decimal degrees, negative = west
     float speed_knots;
     float heading_deg;      // true track from RMC
+    // heading_deg is course-over-ground, which is only meaningful while
+    // actually moving -- a stationary receiver reports whatever noise its
+    // last position deltas implied, and holds it. There's no per-field
+    // validity flag in RMC itself to key off (unlike the sentence-level
+    // A/V status), so this is derived: an active fix AND speed above
+    // HEADING_MIN_KNOTS. Consumers that draw a direction (Home's compass,
+    // Nav's arrow/HDG/TURN, and anything projecting onto the bearing like
+    // VMG) must check this, the same way they already check speed_valid --
+    // otherwise they show a confident heading while standing still.
+    bool heading_valid;
     float hdop;             // horizontal dilution of precision (lower = better)
     float altitude_m;       // antenna altitude above mean sea level, meters
     float pdop;             // position (3D) dilution of precision, from GSA

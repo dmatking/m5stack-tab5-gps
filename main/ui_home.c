@@ -371,9 +371,9 @@ void ui_home_set_speed(ui_home_t *h, float speed, const char *unit)
     if (unit) lv_label_set_text(h->speed_unit, unit);
 }
 
-void ui_home_set_heading(ui_home_t *h, int deg, const char *cardinal)
+void ui_home_set_heading(ui_home_t *h, int deg, const char *cardinal, bool valid)
 {
-    if (h) ui_compass_set_heading(h->heading_val, h->heading_sub, deg, cardinal);
+    if (h) ui_compass_set_heading(h->heading_val, h->heading_sub, deg, cardinal, valid);
 }
 
 void ui_home_set_altitude(ui_home_t *h, int altitude, const char *unit)
