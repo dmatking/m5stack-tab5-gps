@@ -7,6 +7,7 @@
 #include "esp_log.h"
 
 #include "app_settings.h"
+#include "battery.h"
 #include "board_interface.h"
 #include "fb_capture.h"
 #include "gps.h"
@@ -84,6 +85,8 @@ void app_main(void)
     if (!touch_init()) {
         ESP_LOGW(TAG, "Touch unavailable -- map will render but won't be draggable.");
     }
+
+    battery_init();  // INA226 on the shared I2C bus -- see main/battery.c
 
     if (sd_card_mount()) {
         sd_card_list_root();

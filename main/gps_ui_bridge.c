@@ -14,6 +14,7 @@
 #include <string.h>
 
 #include "app_settings.h"
+#include "battery.h"
 #include "design_ui.h"
 #include "gps.h"
 #include "sd_card.h"
@@ -289,6 +290,18 @@ static bool  s_have_prev_alt;
 static float s_prev_alt_ft;
 static float s_vspeed_fpm_ema;
 
+// Battery percent (main/battery.c, INA226 on the internal I2C bus) --
+// re-read every ~10s (TICK_PERIOD_MS * 20), same throttling and reasoning
+// as this file's own SD-usage read below: a number that changes over
+// minutes/hours doesn't need a fresh I2C transaction every 500ms tick.
+// s_battery_have stays false (every screen keeps whatever ui_status_create()
+// seeded it with) if the chip never responded at boot -- see
+// battery_get_percent()'s own comment on why that's not papered over with
+// a fake number.
+static int  s_battery_tick;
+static bool s_battery_have;
+static int  s_battery_pct;
+
 static void tick(void)
 {
     gps_state_t st = gps_get_state();
@@ -306,12 +319,25 @@ static void tick(void)
         if (sat->constellation < 5) const_seen[sat->constellation] = true;
     }
 
+    if (++s_battery_tick >= 20) {
+        s_battery_tick = 0;
+        s_battery_have = battery_get_percent(&s_battery_pct);
+    }
+
     if (!lvgl_port_lock(50)) return;
 
     ui_home_t *h = ui_home();
     if (!h) {
         lvgl_port_unlock();
         return;
+    }
+
+    // Battery: every screen's status bar, real once the INA226 has answered
+    // at least once (see s_battery_have's own comment) -- the one field on
+    // this screen (and every other status bar in the app) gps_ui_bridge.c
+    // couldn't previously make real for lack of any fuel-gauge hardware.
+    if (s_battery_have) {
+        ui_status_set_battery(&h->status, s_battery_pct);
     }
 
     ui_status_set_fix(&h->status, fix ? "GPS FIX" : "NO FIX", fix);
@@ -398,6 +424,7 @@ static void tick(void)
     // into Telemetry setters that no longer exist.
     ui_telemetry_t *t = ui_telemetry();
     if (t) {
+        if (s_battery_have) ui_status_set_battery(&t->status, s_battery_pct);
         ui_status_set_fix(&t->status, fix ? "GPS FIX" : "NO FIX", fix);
         ui_status_set_sats(&t->status, st.sats_in_use, st.hdop_valid ? st.hdop : 0.0f);
         if (have_local) {
@@ -568,6 +595,7 @@ static void tick(void)
     // ui_nav_create()'s own demo value is left alone rather than faked with
     // a real-looking number that isn't.
     ui_nav_t *nav_ui = ui_nav();
+    if (nav_ui && s_battery_have) ui_status_set_battery(&nav_ui->status, s_battery_pct);
     double dest_lat, dest_lon;
     if (nav_ui && ui_is_navigating() && st.latlon_valid &&
         ui_get_destination(&dest_lat, &dest_lon)) {
@@ -620,6 +648,7 @@ static void tick(void)
     // design (see us_central_from_utc()'s own comment), not a picker.
     ui_settings_t *set_ui = ui_settings();
     if (set_ui) {
+        if (s_battery_have) ui_status_set_battery(&set_ui->status, s_battery_pct);
         ui_settings_set_track_log(set_ui, gps_log_active());
 
         static const char *const_abbrev[5] = { "GPS", "GLO", "GAL", "BEI", "QZS" };
@@ -690,6 +719,21 @@ static void tick(void)
         snprintf(line2, sizeof(line2), "AT6668 | uptime %d:%02d:%02d",
                  (int)(uptime_s / 3600), (int)((uptime_s % 3600) / 60), (int)(uptime_s % 60));
         ui_settings_set_footer(set_ui, "Tab5 | FW 1.4.2 | SN 0A31-7742", line2);
+    }
+
+    // ---- Map/Goto: battery only ---------------------------------------------
+    // Neither screen is otherwise touched by this tick() -- Map runs its own
+    // native drag/zoom loop and Goto its own local input handling, so
+    // fix/sats/clock on their status bars are a separate, pre-existing gap
+    // (same demo values ui_map_create()/ui_goto_create() seed at boot).
+    // Battery is a single global value, not screen-specific logic, so it's
+    // cheap to make real here too rather than leaving it the one screen (of
+    // six) still showing a frozen number.
+    if (s_battery_have) {
+        ui_map_t *m = ui_map();
+        if (m) ui_status_set_battery(&m->status, s_battery_pct);
+        ui_goto_t *g = ui_goto();
+        if (g) ui_status_set_battery(&g->status, s_battery_pct);
     }
 
     lvgl_port_unlock();
