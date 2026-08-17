@@ -327,11 +327,13 @@ static float s_vspeed_fpm_ema;
 // minutes/hours doesn't need a fresh I2C transaction every 500ms tick.
 // s_battery_have stays false (every screen keeps whatever ui_status_create()
 // seeded it with) if the chip never responded at boot -- see
-// battery_get_percent()'s own comment on why that's not papered over with
-// a fake number.
+// battery_read()'s own comment on why that's not papered over with
+// a fake number. s_battery_external tracks its other real state (no pack
+// installed, running on USB power alone) -- see battery.h's own comment.
 static int  s_battery_tick;
 static bool s_battery_have;
 static int  s_battery_pct;
+static bool s_battery_external;
 
 // Cross-track's leg origin -- the position navigation *started* from,
 // which is what defines the course line XTE is measured against. Armed on
@@ -370,8 +372,11 @@ static void push_status(ui_status_t *s, bool fix, int sats, const char *clock_bu
     if (!s) return;
     ui_status_set_fix(s, fix ? "GPS FIX" : "NO FIX", fix);
     ui_status_set_sats(s, sats);
-    if (clock_buf)      ui_status_set_clock(s, clock_buf);
-    if (s_battery_have) ui_status_set_battery(s, s_battery_pct);
+    if (clock_buf) ui_status_set_clock(s, clock_buf);
+    if (s_battery_have) {
+        if (s_battery_external) ui_status_set_battery_external(s);
+        else                    ui_status_set_battery(s, s_battery_pct);
+    }
 }
 
 static void tick(void)
@@ -393,7 +398,7 @@ static void tick(void)
 
     if (++s_battery_tick >= 20) {
         s_battery_tick = 0;
-        s_battery_have = battery_get_percent(&s_battery_pct);
+        s_battery_have = battery_read(&s_battery_pct, &s_battery_external);
     }
 
     // Cross-track leg-origin arming -- see s_leg_armed's own comment. Runs
@@ -806,7 +811,10 @@ static void tick(void)
     // design (see us_central_from_utc()'s own comment), not a picker.
     ui_settings_t *set_ui = ui_settings();
     if (set_ui) {
-        if (s_battery_have) ui_status_set_battery(&set_ui->status, s_battery_pct);
+        if (s_battery_have) {
+            if (s_battery_external) ui_status_set_battery_external(&set_ui->status);
+            else                    ui_status_set_battery(&set_ui->status, s_battery_pct);
+        }
         ui_settings_set_track_log(set_ui, gps_log_active());
 
         static const char *const_abbrev[5] = { "GPS", "GLO", "GAL", "BEI", "QZS" };

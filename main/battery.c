@@ -17,7 +17,7 @@ static i2c_master_dev_handle_t s_dev;
 static bool s_present;
 
 // Raw INA226 bus-voltage register -> volts. Shared by battery_init()'s probe
-// and battery_get_percent() so there's exactly one place doing the 1.25
+// and battery_read() so there's exactly one place doing the 1.25
 // mV/bit math (see INA226_REG_BUSV's own comment).
 static bool read_bus_voltage(float *out_volts)
 {
@@ -64,12 +64,32 @@ bool battery_present(void)
     return s_present;
 }
 
-bool battery_get_percent(int *out_percent)
+// Below this, a reading isn't a real (even critically depleted) 2S pack --
+// it's the INA226's bus-voltage pin floating/pulled with no battery
+// installed. A protected 2S Li-ion pack's own protection IC disconnects
+// around 2.5V/cell (~5.0V pack) to prevent over-discharge damage, so any
+// genuinely connected pack should read well above this floor under any
+// real condition; picked with headroom below that, not derived from a
+// measurement of this board's actual no-battery reading (that would need
+// physically pulling the pack and logging the raw value -- ESP_LOGI below
+// does exactly that so it's easy to check/tune from a real capture rather
+// than trusting this blind).
+#define BATTERY_NO_PACK_VOLTS_FLOOR 4.0f
+
+bool battery_read(int *out_percent, bool *out_external)
 {
-    if (!s_present || !out_percent) return false;
+    if (!s_present || !out_percent || !out_external) return false;
 
     float pack_volts;
     if (!read_bus_voltage(&pack_volts)) return false;
+
+    if (pack_volts < BATTERY_NO_PACK_VOLTS_FLOOR) {
+        ESP_LOGI(TAG, "bus voltage %.2f V < %.2f V floor -- no pack installed, on external power",
+                 pack_volts, BATTERY_NO_PACK_VOLTS_FLOOR);
+        *out_percent = 0;
+        *out_external = true;
+        return true;
+    }
 
     // Same curve M5Unified's Power_Class uses for this board (confirmed via
     // its own source): halve the 2S pack voltage to per-cell millivolts,
@@ -80,5 +100,6 @@ bool battery_get_percent(int *out_percent)
     if (pct > 100.0f) pct = 100.0f;
 
     *out_percent = (int)(pct + 0.5f);
+    *out_external = false;
     return true;
 }

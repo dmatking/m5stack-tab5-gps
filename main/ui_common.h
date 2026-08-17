@@ -53,6 +53,11 @@ void ui_status_set_fix(ui_status_t *s, const char *fix_text, bool good);
 void ui_status_set_sats(ui_status_t *s, int in_solution);
 void ui_status_set_clock(ui_status_t *s, const char *clock_text);
 void ui_status_set_battery(ui_status_t *s, int percent);
+// No battery installed, running on external (USB) power -- see
+// main/battery.h's battery_read(). Swaps the "NN%" text for a charge-plug
+// glyph in a neutral color (neither the low-battery red nor the normal
+// green -- it's not a warning, just a different, valid state).
+void ui_status_set_battery_external(ui_status_t *s);
 
 /* Bottom tab bar. `cb` is called with the ui_tab_t as user data when a tab is
  * tapped; pass NULL to make it non-interactive. */

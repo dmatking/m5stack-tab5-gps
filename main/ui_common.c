@@ -66,6 +66,13 @@ void ui_status_set_battery(ui_status_t *s, int percent)
     lv_obj_set_style_text_color(s->batt, percent <= 15 ? UI_C_RED : UI_C_GREEN, 0);
 }
 
+void ui_status_set_battery_external(ui_status_t *s)
+{
+    if (!s || !s->batt) return;
+    lv_label_set_text(s->batt, LV_SYMBOL_CHARGE);
+    lv_obj_set_style_text_color(s->batt, UI_C_BLUE, 0);
+}
+
 /* ------------------------------------------------------------------ navbar */
 
 static const char *tab_text[UI_TAB_COUNT] = {
