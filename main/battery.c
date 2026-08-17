@@ -101,5 +101,6 @@ bool battery_read(int *out_percent, bool *out_external)
 
     *out_percent = (int)(pct + 0.5f);
     *out_external = false;
+    ESP_LOGI(TAG, "bus voltage %.3f V -> %d%%", pack_volts, *out_percent);
     return true;
 }
