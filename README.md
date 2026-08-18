@@ -4,6 +4,17 @@ A full handheld GPS navigation device built on the [M5Stack Tab5](https://docs.m
 
 Modeled loosely on classic dedicated handheld GPS units (think Garmin/Magellan): a real dashboard, a real map you can pan and zoom offline, and a nav screen that gets you to a point you typed or one you saved earlier.
 
+## Screenshots
+
+Captured live off real hardware (see `tools/pull_snapshot.py`) — position data blacked out.
+
+<p>
+  <img src="assets/screenshots/home.png" width="200" alt="Home dashboard">
+  <img src="assets/screenshots/telemetry.png" width="200" alt="Telemetry screen">
+  <img src="assets/screenshots/goto.png" width="200" alt="Goto coordinate entry">
+  <img src="assets/screenshots/settings.png" width="200" alt="Settings screen">
+</p>
+
 ## Features
 
 - **Home dashboard** — live position, speed, heading (compass), altitude, satellite count, GPS accuracy estimate, a trip odometer (distance/moving time/avg+max speed/elevation gain, gated so parked GPS jitter doesn't inflate it), and a real battery gauge.
