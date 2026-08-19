@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <stdbool.h>
+
 // On-demand screen capture *and* remote tab switching for debugging -- lets
 // tools/pull_snapshot.py grab whatever's currently on an LVGL-driven screen
 // (Home/Telemetry/Goto/Settings) as a PNG on the PC, and lets a "TAB <name>"
@@ -31,3 +33,17 @@
 // app_main(), after ui_shell_start() -- normal-mode build only, not the
 // USB_MSC_MODE/SD_XFER_MODE dev-tool builds (see main.c).
 void fb_capture_start(void);
+
+// Same underlying capture as "SNAP GET" (lv_snapshot_take() of whatever
+// LVGL screen is currently active -- see this header's own comment on why
+// not a raw hw-framebuffer read, and why that means the Map screen still
+// isn't capturable this way either), but written to a file on the SD card
+// instead of the flash partition -- for capturing screens while genuinely
+// untethered outdoors with no USB connection to pull SNAP GET's capture
+// through. Files land in "<SD_MOUNT_POINT>/screenshots/shot_NNNN.bin",
+// raw RGB565, no header; tools/sd_screenshots_to_png.py decodes them the
+// same way tools/pull_snapshot.py already does. Returns false (logs its
+// own reason) if the Map screen is active, the SD card isn't mounted, or
+// the write fails -- callers should treat that as "nothing saved", not
+// retry automatically.
+bool fb_capture_save_to_sd(void);

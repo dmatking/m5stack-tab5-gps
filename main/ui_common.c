@@ -1,6 +1,45 @@
 #include "ui_common.h"
 
+#include "fb_capture.h"
+
 /* ------------------------------------------------------------------ status */
+
+// Deletes the one-shot camera-flash overlay -- see screenshot_hotspot_cb().
+static void screenshot_flash_del_cb(lv_timer_t *t)
+{
+    lv_obj_t *flash = (lv_obj_t *)lv_timer_get_user_data(t);
+    if (flash) lv_obj_delete(flash);
+}
+
+// Invisible top-left corner hotspot's tap handler -- saves whatever screen
+// is currently showing to the SD card (main/fb_capture.c's
+// fb_capture_save_to_sd()), added specifically for capturing screens while
+// genuinely untethered outdoors (e.g. to get a real GPS fix) -- there's no
+// USB connection available there to pull the normal "SNAP GET" capture
+// through. A brief full-screen flash is the only feedback available (white
+// for saved, red for not -- no SD card mounted, or nothing to capture) --
+// there's no serial console to check a log line against out in the field
+// either, this has to be self-explanatory on the screen alone.
+static void screenshot_hotspot_cb(lv_event_t *e)
+{
+    lv_obj_t *hotspot = (lv_obj_t *)lv_event_get_target(e);
+    lv_obj_t *scr = lv_obj_get_screen(hotspot);
+
+    bool ok = fb_capture_save_to_sd();
+
+    lv_obj_t *flash = ui_box(scr);
+    lv_obj_add_flag(flash, LV_OBJ_FLAG_FLOATING); // skip scr's own flex layout, same
+                                                   // reasoning as ui_home.c's confirm scrim
+    lv_obj_remove_flag(flash, LV_OBJ_FLAG_CLICKABLE); // don't eat the tap that dismisses it
+    lv_obj_set_pos(flash, 0, 0);
+    lv_obj_set_size(flash, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(flash, ok ? lv_color_white() : UI_C_RED, 0);
+    lv_obj_set_style_bg_opa(flash, LV_OPA_COVER, 0);
+    lv_obj_move_foreground(flash);
+
+    lv_timer_t *timer = lv_timer_create(screenshot_flash_del_cb, 150, flash);
+    lv_timer_set_repeat_count(timer, 1);
+}
 
 void ui_status_create(lv_obj_t *parent, ui_status_t *out)
 {
@@ -32,6 +71,20 @@ void ui_status_create(lv_obj_t *parent, ui_status_t *out)
 
     out->clock = ui_label(root, "10:24 AM", ui_font.s, UI_C_TEXT);
     out->batt  = ui_label(root, "87%", ui_font.s, UI_C_GREEN);
+
+    // Invisible screenshot-to-SD hotspot, see screenshot_hotspot_cb()'s own
+    // comment. FLOATING so it sits at a fixed (0,0) position instead of
+    // becoming another item in root's flex row; added last so it's also
+    // drawn last (on top) and wins the tap over the dot/fix-text beneath
+    // it, which have never had a handler of their own anyway (ui_box()'s
+    // default CLICKABLE + deepest-clickable-wins hit testing already
+    // routes taps there to nothing today).
+    lv_obj_t *hotspot = ui_box(root);
+    lv_obj_add_flag(hotspot, LV_OBJ_FLAG_FLOATING);
+    lv_obj_set_pos(hotspot, 0, 0);
+    lv_obj_set_size(hotspot, 80, UI_STATUS_H);
+    lv_obj_set_style_bg_opa(hotspot, LV_OPA_TRANSP, 0);
+    lv_obj_add_event_cb(hotspot, screenshot_hotspot_cb, LV_EVENT_CLICKED, NULL);
 }
 
 void ui_status_set_fix(ui_status_t *s, const char *fix_text, bool good)

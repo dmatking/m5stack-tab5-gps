@@ -52,6 +52,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "driver/usb_serial_jtag.h"
 #include "esp_heap_caps.h"
@@ -63,6 +64,7 @@
 #include "lvgl.h"
 
 #include "design_ui.h"
+#include "sd_card.h"
 #include "ui_common.h"
 #include "ui_shell.h"
 #include "ui_theme.h"
@@ -148,22 +150,26 @@ static uint32_t crc32_update(uint32_t crc, const uint8_t *data, size_t len)
 }
 
 // Snapshots lv_screen_active() into s_scratch (tightly packed, UI_SCREEN_W *
-// UI_SCREEN_H * 2 bytes), then writes it to the "snapshot" flash partition
-// (see partitions.csv) and acks with its size/crc32 -- see this file's
-// header comment for why it's flash instead of a live transfer. Sends its
-// own SNAP FAIL on any failure; caller just returns to the read loop.
-static bool do_capture(void)
+// UI_SCREEN_H * 2 bytes) -- shared by do_capture() (SNAP GET -> flash
+// partition) and fb_capture_save_to_sd() (corner-tap -> SD file). Neither
+// caller's own "FAIL" message is sent from here, since the two callers
+// speak different protocols (USJ text acks vs. a plain bool); each logs/
+// acks its own failure after checking this return value. Reused reasoning
+// for the lv_snapshot_take() approach itself (not a raw hw-framebuffer
+// read) also applies to both callers equally -- see this file's header
+// comment, and [[project_fb_capture_tool]] in project memory, for why
+// that's still true even for the SD path: this project has never verified
+// which physical DSI buffer is front-facing at any instant, so reading
+// the hw framebuffer directly would be trading a proven-correct capture
+// for an unverified one.
+static bool take_snapshot(void)
 {
-    if (ui_shell_map_active()) {
-        usj_printf("SNAP FAIL map screen not supported yet\n");
-        return false;
-    }
+    if (ui_shell_map_active()) return false;
 
     if (!s_scratch) {
         s_scratch = heap_caps_malloc((size_t)UI_SCREEN_W * UI_SCREEN_H * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
         if (!s_scratch) {
             ESP_LOGE(TAG, "PSRAM alloc failed");
-            usj_printf("SNAP FAIL out of memory\n");
             return false;
         }
     }
@@ -172,17 +178,13 @@ static bool do_capture(void)
     // this task isn't on any latency-sensitive path (touch/flush), so it's
     // fine to wait out whatever else briefly holds the lock rather than
     // failing the capture on the first busy tick.
-    if (!lvgl_port_lock(1000)) {
-        usj_printf("SNAP FAIL lvgl busy\n");
-        return false;
-    }
+    if (!lvgl_port_lock(1000)) return false;
 
     lv_obj_t *scr = lv_screen_active();
     lv_draw_buf_t *snap = lv_snapshot_take(scr, LV_COLOR_FORMAT_RGB565);
     if (!snap) {
         lvgl_port_unlock();
         ESP_LOGE(TAG, "lv_snapshot_take failed");
-        usj_printf("SNAP FAIL snapshot failed\n");
         return false;
     }
 
@@ -196,6 +198,19 @@ static bool do_capture(void)
 
     lv_draw_buf_destroy(snap);
     lvgl_port_unlock();
+    return true;
+}
+
+// Writes s_scratch to the "snapshot" flash partition (see partitions.csv)
+// and acks with its size/crc32 -- see this file's header comment for why
+// it's flash instead of a live transfer. Sends its own SNAP FAIL on any
+// failure; caller just returns to the read loop.
+static bool do_capture(void)
+{
+    if (!take_snapshot()) {
+        usj_printf("SNAP FAIL map screen not supported yet, or capture failed\n");
+        return false;
+    }
 
     const size_t total = (size_t)UI_SCREEN_W * UI_SCREEN_H * sizeof(uint16_t);
     uint32_t crc = crc32_update(0, (const uint8_t *)s_scratch, total);
@@ -234,6 +249,54 @@ static bool do_capture(void)
 
     ESP_LOGI(TAG, "wrote %u bytes to the snapshot partition", (unsigned)total);
     usj_printf("SNAP OK %d %d %u %08lx\n", UI_SCREEN_W, UI_SCREEN_H, (unsigned)total, (unsigned long)crc);
+    return true;
+}
+
+bool fb_capture_save_to_sd(void)
+{
+    if (!take_snapshot()) {
+        ESP_LOGW(TAG, "screenshot-to-SD: map screen active, or capture failed");
+        return false;
+    }
+
+    if (!sd_card_is_mounted()) {
+        ESP_LOGW(TAG, "screenshot-to-SD: SD card not mounted");
+        return false;
+    }
+
+    // Not fatal if it already exists (EEXIST) -- that's the common case
+    // after the first screenshot ever taken.
+    mkdir(SD_MOUNT_POINT "/screenshots", 0777);
+
+    // Indexed filename, not a timestamp -- this device has no RTC and may
+    // not have a GPS fix yet when a screenshot's taken (capturing outdoors
+    // before/while acquiring one is the whole point of this feature), so a
+    // wall-clock name isn't reliably meaningful. Scans for the first free
+    // slot rather than keeping an in-RAM counter, so it still picks up
+    // where a previous boot's captures left off.
+    char path[64];
+    int idx = 1;
+    for (; idx < 10000; idx++) {
+        snprintf(path, sizeof(path), SD_MOUNT_POINT "/screenshots/shot_%04d.bin", idx);
+        struct stat st;
+        if (stat(path, &st) != 0) break; // first name that doesn't already exist
+    }
+
+    FILE *f = fopen(path, "wb");
+    if (!f) {
+        ESP_LOGW(TAG, "screenshot-to-SD: could not open %s", path);
+        return false;
+    }
+    const size_t total = (size_t)UI_SCREEN_W * UI_SCREEN_H * sizeof(uint16_t);
+    size_t written = fwrite(s_scratch, 1, total, f);
+    fclose(f);
+    if (written != total) {
+        ESP_LOGW(TAG, "screenshot-to-SD: short write to %s (%u/%u bytes)",
+                 path, (unsigned)written, (unsigned)total);
+        return false;
+    }
+
+    ESP_LOGI(TAG, "screenshot saved to %s", path);
     return true;
 }
 
