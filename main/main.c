@@ -24,6 +24,7 @@
 #include "ui_shell.h"
 #include "usb_msc.h"
 #include "waypoints.h"
+#include "wifi_ui_bridge.h"
 
 static const char *TAG = "APP";
 
@@ -128,6 +129,13 @@ void app_main(void)
     // before returning, so ui_home() is already valid here even though the
     // splash screen is still showing in front of it.
     gps_ui_bridge_start();
+
+    // esp_hosted_init()/connect_to_slave() already ran above, before
+    // nvs_flash_init() -- this just reads any stored credentials
+    // (components/wifi_prov's own NVS namespace) and kicks a background
+    // reconnect if there are any. Needs ui_wifi()/ui_settings() to exist
+    // already (ui_shell_start() -> ui_init() above built them).
+    wifi_ui_bridge_init();
 
     fb_capture_start(); // on-demand screen capture over USB -- see main/fb_capture.c
 #endif

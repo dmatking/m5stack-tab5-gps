@@ -230,6 +230,17 @@ ui_settings_t *ui_settings_create(lv_event_cb_t tab_cb)
     lv_obj_t *sd = row_base(g4, "SD card");
     s->sd_usage = ui_label(sd, "-- / -- GB", ui_font.s, UI_C_MUTED);
 
+    /* connectivity ----------------------------------------------------- */
+    // No ui_mark_placeholder() -- real (main/wifi_ui_bridge.c owns the
+    // actual connect/status logic, this row just shows and routes to it).
+    // row_value(), not row_display() -- this one IS tappable, unlike every
+    // other row_display() in this file: it opens main/ui_wifi.c's screen
+    // rather than cycling a value in place (settings_row_cb()'s UI_SET_WIFI
+    // case in design_ui.c).
+    lv_obj_t *g5 = group(body, "CONNECTIVITY");
+    row_value(g5, "Wi-Fi", "Not connected", UI_C_MUTED, UI_SET_WIFI,
+              &s->value[UI_SET_WIFI]);
+
     lv_obj_t *spacer = ui_box(body);
     lv_obj_set_width(spacer, LV_PCT(100));
     lv_obj_set_flex_grow(spacer, 1);
