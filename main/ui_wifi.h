@@ -31,6 +31,7 @@ typedef struct {
 
     lv_obj_t *ssid_ta;
     lv_obj_t *pass_ta;
+    lv_obj_t *pass_eye;    /* show/hide password toggle */
     lv_obj_t *keyboard;    /* hidden until an lv_textarea gets focus */
 
     lv_obj_t *btn_cancel;

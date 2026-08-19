@@ -155,6 +155,19 @@ static void connect_task(void *arg)
     strncpy((char *)wcfg.sta.ssid, ssid, sizeof(wcfg.sta.ssid) - 1);
     strncpy((char *)wcfg.sta.password, pass, sizeof(wcfg.sta.password) - 1);
     wcfg.sta.threshold.authmode = pass[0] ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
+    // PMF-capable-but-not-required -- a zero-initialized pmf_cfg (the
+    // default this struct started with, and what wifi_prov.c's own
+    // sta_connect() also leaves unset) announces the ESP32 as NOT
+    // PMF-capable at all. A lot of routers shipped in the last few years
+    // default to WPA2/WPA3-transition mode with PMF set to "required" or
+    // "capable" rather than fully off, and reject a non-PMF-capable
+    // client's association almost immediately -- a fast (1-3s) disconnect
+    // with no useful reason code surfaced through esp_wifi_remote's RPC
+    // event bridge, which looks identical to a wrong password from here.
+    // Opting in as capable-but-not-required is the standard fix and safe
+    // either way (older/PMF-less routers just ignore it).
+    wcfg.sta.pmf_cfg.capable = true;
+    wcfg.sta.pmf_cfg.required = false;
 
     if (!s_wifi_stack_up) {
         esp_netif_init();                     // ESP_ERR_INVALID_STATE if
