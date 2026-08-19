@@ -120,3 +120,29 @@ CONFIG_LV_USE_FLOAT=y
 # pipeline while LVGL is still fully up, which is a lot less to get wrong
 # than reaching into font internals from outside it.
 CONFIG_LV_USE_SNAPSHOT=y
+
+# WiFi -- Tab5 has no native WiFi; the P4 talks to an onboard ESP32-C6
+# co-processor over SDIO via esp_hosted + esp_wifi_remote (weak-symbol shim
+# that redirects standard esp_wifi_* calls to the hosted co-processor). Pin
+# set below is TAB5-SPECIFIC -- the generic esp_hosted defaults target a
+# different reference board's SDIO pins and silently fail (handshake
+# timeout) on this board. Confirmed identical across m5stack-tab5-ssh-terminal,
+# m5stack-tab5-video-stream, and esp32-p4-webradio's own sdkconfig.tab5; the
+# PRIV_*_SLOT_1 keys specifically (not the plain/non-slot keys, which get
+# reset to slot defaults at config-gen) are what's required.
+CONFIG_ESP_HOSTED_ENABLED=y
+CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE=y
+CONFIG_ESP_HOSTED_IDF_SLAVE_TARGET="esp32c6"
+CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y
+CONFIG_ESP_HOSTED_SDIO_GPIO_RESET_SLAVE=54
+CONFIG_ESP_HOSTED_SDIO_4_BIT_BUS=y
+CONFIG_ESP_HOSTED_SDIO_BUS_WIDTH=4
+CONFIG_ESP_HOSTED_SDIO_CLOCK_FREQ_KHZ=40000
+CONFIG_ESP_HOSTED_SDIO_SLOT_1=y
+CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_CMD_SLOT_1=13
+CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_CLK_SLOT_1=12
+CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D0_SLOT_1=11
+CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D1_4BIT_BUS_SLOT_1=10
+CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D2_4BIT_BUS_SLOT_1=9
+CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D3_4BIT_BUS_SLOT_1=8
+CONFIG_ESP_WIFI_REMOTE_ENABLED=y

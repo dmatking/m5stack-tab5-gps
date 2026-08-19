@@ -5,6 +5,7 @@
 #include <sys/stat.h>
 
 #include "esp_log.h"
+#include "esp_hosted.h"
 
 #include "app_settings.h"
 #include "battery.h"
@@ -59,6 +60,24 @@ void app_main(void)
 {
     ESP_LOGI(TAG, "app_main starting");
     board_init();
+
+    // Phase 1 de-risking probe: bring up the P4<->C6 SDIO link (see
+    // sdkconfig.defaults' WiFi block for the Tab5-specific pin config) and
+    // report what's on the co-processor. Must run before nvs_flash_init()/
+    // esp_wifi_init()/etc -- app_settings_init() right below does the
+    // former -- matching every sibling project's proven init order. No
+    // consumer of the connection yet; this only proves the link comes up.
+    ESP_ERROR_CHECK(esp_hosted_init());
+    ESP_ERROR_CHECK(esp_hosted_connect_to_slave());
+    esp_hosted_coprocessor_fwver_t fwver = {0};
+    if (esp_hosted_get_coprocessor_fwversion(&fwver) == ESP_OK) {
+        ESP_LOGI(TAG, "C6 co-processor connected, firmware v%lu.%lu.%lu",
+                 (unsigned long)fwver.major1, (unsigned long)fwver.minor1,
+                 (unsigned long)fwver.patch1);
+    } else {
+        ESP_LOGW(TAG, "C6 co-processor connected, but firmware version query failed");
+    }
+
     app_settings_init(); // before ui_shell_start() -- the Settings screen needs real persisted values at creation time
     waypoints_init();    // own NVS partition, see main/waypoints.c -- before ui_shell_start() for the same reason (Goto's saved list is built at creation time)
 
