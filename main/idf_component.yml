@@ -18,3 +18,15 @@ dependencies:
   # actually verified working on this board/IDF combo (m5stack-tab5-lvgl-primer).
   espressif/esp_lvgl_port:
     version: "2.8.0"
+  # WiFi -- P4-to-C6 SDIO bring-up (see sdkconfig.defaults' WiFi block for
+  # the Tab5-specific pin config). Pinned exact upper bounds, not the newer
+  # 2.12.3/1.5.0 some sibling repos try: this is the combo confirmed working
+  # on THIS project's exact ESP-IDF v6.0.1 by m5stack-tab5-ssh-terminal's own
+  # dependencies.lock, and cross-checked as a general P4 boot-OOM issue on
+  # newer versions (not specific to another project's own dependencies --
+  # the same pin+reasoning appears verbatim in the plain, TLS-free
+  # esp32-p4-wifi-starter too).
+  espressif/esp_hosted:
+    version: "<2.12"
+  espressif/esp_wifi_remote:
+    version: "<1.5"

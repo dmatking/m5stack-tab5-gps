@@ -18,6 +18,7 @@ typedef enum {
     UI_SET_CONSTELLATIONS,
     UI_SET_UPDATE_RATE,
     UI_SET_TRACK_LOG,
+    UI_SET_WIFI,
     UI_SET_COUNT
 } ui_setting_id_t;
 
@@ -37,11 +38,11 @@ typedef struct {
 ui_settings_t *ui_settings_create(lv_event_cb_t tab_cb);
 
 void ui_settings_set_brightness(ui_settings_t *s, int percent);
-// Chevron ("value >") is only appended for the three actionable rows
-// created with row_value() in ui_settings.c (Distance/speed, Elevation,
-// Coordinate format) -- the read-only rows (Time zone/Constellations/
-// Update rate/Track log, created with row_display()) get plain text, no
-// chevron, since there's nothing to tap there.
+// Chevron ("value >") is only appended for the actionable rows created
+// with row_value() in ui_settings.c (Distance/speed, Elevation, Coordinate
+// format, Wi-Fi) -- the read-only rows (Time zone/Constellations/Update
+// rate/Track log, created with row_display()) get plain text, no chevron,
+// since there's nothing to tap there.
 void ui_settings_set_value(ui_settings_t *s, ui_setting_id_t id, const char *text);
 void ui_settings_set_screen_on(ui_settings_t *s, bool on);
 void ui_settings_set_time_24h(ui_settings_t *s, bool on);

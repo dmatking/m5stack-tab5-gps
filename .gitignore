@@ -9,6 +9,11 @@ dependencies.lock
 # IDF managed components cache
 managed_components/
 
+# wifi_prov's nested captive-portal component, copied into components/ at
+# CMake configure time (see root CMakeLists.txt) -- regenerated from the
+# components/wifi_prov submodule every configure, not meant to be committed.
+/components/nordesems__esp-captive-portal/
+
 # Python
 __pycache__/
 *.pyc

@@ -19,6 +19,7 @@
 #include "app_settings.h"
 #include "board_interface.h"
 #include "waypoints.h"
+#include "wifi_ui_bridge.h"
 
 #include <stdio.h>
 
@@ -28,6 +29,7 @@ static ui_nav_t       *s_nav_p;
 static ui_telemetry_t *s_tel_p;
 static ui_goto_t      *s_goto_p;
 static ui_settings_t  *s_set_p;
+static ui_wifi_t      *s_wifi_p;
 static bool            s_navigating;
 
 static void load(lv_obj_t *screen)
@@ -74,6 +76,16 @@ static void goto_start_cb(lv_event_t *e)
     start_nav_to(lat, lon, "Custom Destination");
 }
 static void goto_cancel_cb(lv_event_t *e) { LV_UNUSED(e); ui_show_tab(UI_TAB_HOME); }
+
+// Wi-Fi screen's Cancel/Connect -- see main/wifi_ui_bridge.c for the
+// actual esp_wifi work; this just reads the typed fields and hands them
+// off, same ownership split as goto_start_cb()/ui_goto_parse() above.
+static void wifi_cancel_cb(lv_event_t *e) { LV_UNUSED(e); ui_show_tab(UI_TAB_MORE); }
+static void wifi_connect_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    wifi_ui_bridge_connect(ui_wifi_get_ssid(s_wifi_p), ui_wifi_get_password(s_wifi_p));
+}
 
 // Rebuilds Goto's saved-waypoint list from the store. Must run after EVERY
 // mutation, not just on show: the row callbacks carry a list index, so a
@@ -207,6 +219,8 @@ static void settings_row_cb(lv_event_t *e)
         bool m = !app_settings_get_elevation_m();
         app_settings_set_elevation_m(m);
         ui_settings_set_value(s_set_p, UI_SET_ELEVATION, m ? "meters" : "feet");
+    } else if (id == UI_SET_WIFI) {
+        ui_show_wifi();
     }
 }
 
@@ -220,6 +234,7 @@ void ui_init(void)
     s_tel_p  = ui_telemetry_create(tab_event_cb);
     s_goto_p = ui_goto_create(tab_event_cb);
     s_set_p  = ui_settings_create(tab_event_cb);
+    s_wifi_p = ui_wifi_create(tab_event_cb);
 
     ui_nav_set_buttons(s_nav_p, nav_map_cb, nav_stop_cb);
     ui_goto_set_start_cb(s_goto_p, goto_start_cb, NULL);
@@ -227,6 +242,9 @@ void ui_init(void)
     ui_goto_set_save_cb(s_goto_p, goto_save_cb, NULL);
     ui_goto_set_saved_cbs(s_goto_p, saved_go_cb, saved_del_cb);
     ui_goto_refresh_saved();
+
+    ui_wifi_set_connect_cb(s_wifi_p, wifi_connect_cb, NULL);
+    ui_wifi_set_cancel_cb(s_wifi_p, wifi_cancel_cb, NULL);
 
     // Sync each switch/slider to its real persisted value -- ui_settings_create()
     // itself always creates them at their own demo values, same "creation-time
@@ -280,6 +298,7 @@ void ui_show_tab(ui_tab_t tab)
 // while you're on it except delete, which rebuilds explicitly).
 void ui_show_goto(void) { ui_goto_refresh_saved(); load(s_goto_p->screen); }
 void ui_show_nav(void)  { load(s_nav_p->screen); }
+void ui_show_wifi(void) { load(s_wifi_p->screen); }
 
 void ui_set_navigating(bool navigating)
 {
@@ -313,3 +332,4 @@ ui_nav_t       *ui_nav(void)       { return s_nav_p; }
 ui_telemetry_t *ui_telemetry(void) { return s_tel_p; }
 ui_goto_t      *ui_goto(void)      { return s_goto_p; }
 ui_settings_t  *ui_settings(void)  { return s_set_p; }
+ui_wifi_t      *ui_wifi(void)      { return s_wifi_p; }

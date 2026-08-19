@@ -13,6 +13,7 @@
 #include "ui_telemetry.h"
 #include "ui_goto.h"
 #include "ui_settings.h"
+#include "ui_wifi.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -26,6 +27,11 @@ void ui_init(void);
  * to the native map renderer instead of loading ui_map's own screen. */
 void ui_show_tab(ui_tab_t tab);
 void ui_show_goto(void);
+
+// Loads main/ui_wifi.c's screen -- reached from Settings' CONNECTIVITY >
+// Wi-Fi row (UI_SET_WIFI in settings_row_cb()). Its own Cancel button
+// returns to Settings the same way Goto's Cancel returns to Home.
+void ui_show_wifi(void);
 
 // Rebuilds Goto's saved-waypoint list from main/waypoints.h. Called on
 // every entry to the Goto screen, and must also be called after any
@@ -51,6 +57,7 @@ ui_nav_t       *ui_nav(void);
 ui_telemetry_t *ui_telemetry(void);
 ui_goto_t      *ui_goto(void);
 ui_settings_t  *ui_settings(void);
+ui_wifi_t      *ui_wifi(void);
 
 #ifdef __cplusplus
 }
