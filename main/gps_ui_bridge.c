@@ -456,20 +456,33 @@ static void tick(void)
     ui_map_t *map_ui = ui_map();
     if (map_ui) push_status(&map_ui->status, fix, st.sats_in_use, status_clock_p);
 
+    // Position/speed/altitude/accuracy: always called now, every tick,
+    // `valid` passed straight through from the corresponding gps_state_t
+    // field -- see ui_home_set_speed()'s own comment (main/ui_home.h) for
+    // why. Used to be called only `if (st.X_valid)`, which meant a device
+    // that never got a fix (confirmed on real hardware: NO FIX/0 sats
+    // sitting right next to a confident "42 mph"/"1,248 ft") just kept
+    // showing ui_home_create()'s literal creation-time demo numbers
+    // forever, since nothing ever told these cards there was no real data
+    // yet. Position already took plain strings (no signature change
+    // needed there) -- "--" is passed directly instead of a formatted
+    // coordinate when invalid.
+    int coord_fmt = app_settings_get_coord_format();
     if (st.latlon_valid) {
-        int coord_fmt = app_settings_get_coord_format();
         char lat_buf[32], lon_buf[32];
         format_coord(st.latitude_deg, true, coord_fmt, lat_buf, sizeof(lat_buf));
         format_coord(st.longitude_deg, false, coord_fmt, lon_buf, sizeof(lon_buf));
         ui_home_set_position(h, lat_buf, lon_buf);
+    } else {
+        ui_home_set_position(h, "--", "--");
     }
 
     bool dist_km = app_settings_get_distance_km();
     bool elev_m  = app_settings_get_elevation_m();
 
-    if (st.speed_valid) {
-        float mph = st.speed_knots * 1.15078f;
-        ui_home_set_speed(h, conv_speed_mph(mph, dist_km), speed_unit_str(dist_km));
+    {
+        float mph = st.speed_valid ? st.speed_knots * 1.15078f : 0.0f;
+        ui_home_set_speed(h, conv_speed_mph(mph, dist_km), speed_unit_str(dist_km), st.speed_valid);
     }
 
     // Gated on heading_valid (gps.h) rather than shown unconditionally --
@@ -478,14 +491,15 @@ static void tick(void)
     ui_home_set_heading(h, (int)(st.heading_deg + 0.5f),
                         cardinal_8(st.heading_deg), st.heading_valid);
 
-    if (st.altitude_valid) {
-        float alt_ft = st.altitude_m * 3.28084f;
-        ui_home_set_altitude(h, (int)(conv_elev_ft(alt_ft, elev_m) + 0.5f), elev_unit_str(elev_m));
+    {
+        float alt_ft = st.altitude_valid ? st.altitude_m * 3.28084f : 0.0f;
+        ui_home_set_altitude(h, (int)(conv_elev_ft(alt_ft, elev_m) + 0.5f),
+                             elev_unit_str(elev_m), st.altitude_valid);
     }
 
-    if (st.hdop_valid) {
-        float acc_ft = hdop_to_accuracy_ft(st.hdop);
-        ui_home_set_accuracy(h, conv_elev_ft(acc_ft, elev_m), elev_unit_str(elev_m));
+    {
+        float acc_ft = st.hdop_valid ? hdop_to_accuracy_ft(st.hdop) : 0.0f;
+        ui_home_set_accuracy(h, conv_elev_ft(acc_ft, elev_m), elev_unit_str(elev_m), st.hdop_valid);
     }
 
     const char *sat_quality = st.sats_in_use >= 7 ? "Good"
@@ -493,6 +507,11 @@ static void tick(void)
                                                    : "Poor";
     ui_home_set_satellites(h, st.sats_in_use, sat_quality);
 
+    // Same "always call it" fix as position/speed/altitude/accuracy above --
+    // ui_home_set_local_time() already takes plain strings (no signature
+    // change needed), so the fix here is just not skipping the call: a
+    // device with no valid time/date yet was stuck showing
+    // ui_home_create()'s literal creation-time demo clock/date forever.
     if (have_local) {
         static const char *months[12] = {
             "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -504,6 +523,8 @@ static void tick(void)
         snprintf(date_buf, sizeof(date_buf), "%s %d, %d",
                  months[local_tm.tm_mon], local_tm.tm_mday, local_tm.tm_year + 1900);
         ui_home_set_local_time(h, hms_buf, ampm_buf, date_buf, tz_abbrev);
+    } else {
+        ui_home_set_local_time(h, "--:--", "", "--", "--");
     }
 
     // Home's trip widget is set further below, alongside Telemetry's -- both
@@ -529,7 +550,7 @@ static void tick(void)
         }
 
         if (st.latlon_valid) {
-            ui_telemetry_set_position(t, st.latitude_deg, st.longitude_deg);
+            ui_telemetry_set_position(t, st.latitude_deg, st.longitude_deg, true);
 
             // Only add to the trip odometer while actually moving (per
             // MOVING_MPH_THRESHOLD above) -- otherwise parked GPS jitter
@@ -541,6 +562,8 @@ static void tick(void)
             s_prev_lat = st.latitude_deg;
             s_prev_lon = st.longitude_deg;
             s_have_prev_pos = true;
+        } else {
+            ui_telemetry_set_position(t, 0.0, 0.0, false);
         }
 
         if (st.altitude_valid) {
@@ -573,16 +596,13 @@ static void tick(void)
             // follows app_settings_get_elevation_m() too -- fpm becomes
             // m/min rather than being a separate unit choice of its own.
             float vspeed_disp = elev_m ? vspeed_fpm * 0.3048f : vspeed_fpm;
-            ui_telemetry_set_vspeed(t, (int)(vspeed_disp + 0.5f), elev_m ? "m/min" : "fpm");
+            ui_telemetry_set_vspeed(t, (int)(vspeed_disp + 0.5f), elev_m ? "m/min" : "fpm", true);
+        } else {
+            ui_telemetry_set_vspeed(t, 0, elev_m ? "m/min" : "fpm", false);
         }
 
-        if (st.hdop_valid) {
-            ui_telemetry_set_hdop(t, st.hdop);
-        }
-
-        if (st.dop_valid) {
-            ui_telemetry_set_dop(t, st.pdop, st.vdop, st.fix_type);
-        }
+        ui_telemetry_set_hdop(t, st.hdop, st.hdop_valid);
+        ui_telemetry_set_dop(t, st.pdop, st.vdop, st.fix_type, st.dop_valid);
 
         // Unlike Home's single (now Central) clock, Telemetry has room for
         // both a real LOCAL (Central) and a real UTC card side by side --
@@ -592,6 +612,8 @@ static void tick(void)
             format_clock(local_buf, sizeof(local_buf), local_tm.tm_hour, local_tm.tm_min, local_tm.tm_sec, true);
             format_clock(utc_buf, sizeof(utc_buf), st.utc_tm.tm_hour, st.utc_tm.tm_min, st.utc_tm.tm_sec, true);
             ui_telemetry_set_time(t, local_buf, utc_buf, tz_abbrev);
+        } else {
+            ui_telemetry_set_time(t, "--:--:--", "--:--:--", "--");
         }
 
         // Feeds Home's trip card only now -- Telemetry's own TRIP/MAX SPEED/
@@ -828,14 +850,21 @@ static void tick(void)
                                         "%s%s", any_const_short ? " + " : "", const_abbrev[c]);
             any_const_short = true;
         }
-        if (any_const_short) {
-            ui_settings_set_value(set_ui, UI_SET_CONSTELLATIONS, const_short);
-        }
+        // Same "always call it" fix as Home/Telemetry above -- these three
+        // used to only ever update `if` their backing data was available,
+        // so a device that never got any of it just kept showing
+        // ui_settings_create()'s own creation-time demo values ("GPS + GLO
+        // + GAL", "5 Hz", "CDT (UTC-5)") forever, same root cause as the
+        // Home dashboard freeze this whole fix addresses.
+        ui_settings_set_value(set_ui, UI_SET_CONSTELLATIONS,
+                              any_const_short ? const_short : "--");
 
         if (st.fix_rate_valid) {
             char rate_buf[16];
             snprintf(rate_buf, sizeof(rate_buf), "%.0f Hz", st.fix_rate_hz);
             ui_settings_set_value(set_ui, UI_SET_UPDATE_RATE, rate_buf);
+        } else {
+            ui_settings_set_value(set_ui, UI_SET_UPDATE_RATE, "--");
         }
 
         if (have_local) {
@@ -858,6 +887,12 @@ static void tick(void)
             char time_part[16];
             format_clock(time_part, sizeof(time_part), local_tm.tm_hour, local_tm.tm_min, 0, false);
             ui_status_set_clock(&set_ui->status, time_part);
+        } else {
+            // Same fix, same reasoning as the header comment above -- this
+            // branch just didn't exist before, so a device with no valid
+            // time yet kept the original "10:24 AM"/timezone-less state.
+            ui_settings_set_value(set_ui, UI_SET_TIMEZONE, "--");
+            ui_status_set_clock(&set_ui->status, "--:--");
         }
 
         // SD usage walks the FAT free-cluster chain (esp_vfs_fat_info()) --

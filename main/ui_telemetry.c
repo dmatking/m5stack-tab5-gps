@@ -313,34 +313,49 @@ ui_telemetry_t *ui_telemetry_create(lv_event_cb_t tab_cb)
 
 /* ------------------------------------------------------------------ setters */
 
-void ui_telemetry_set_position(ui_telemetry_t *t, double dd_lat, double dd_lon)
+void ui_telemetry_set_position(ui_telemetry_t *t, double dd_lat, double dd_lon, bool valid)
 {
     if (!t) return;
-    lv_label_set_text_fmt(t->pos_dd, "%.6f, %.6f | DD", dd_lat, dd_lon);
+    if (valid) lv_label_set_text_fmt(t->pos_dd, "%.6f, %.6f | DD", dd_lat, dd_lon);
+    else       lv_label_set_text(t->pos_dd, "--");
 }
 
-void ui_telemetry_set_vspeed(ui_telemetry_t *t, int value, const char *unit)
-{
-    if (t) lv_label_set_text_fmt(t->vspeed, "%+d %s", value, unit ? unit : "fpm");
-}
-
-void ui_telemetry_set_hdop(ui_telemetry_t *t, float hdop)
+void ui_telemetry_set_vspeed(ui_telemetry_t *t, int value, const char *unit, bool valid)
 {
     if (!t) return;
+    if (valid) lv_label_set_text_fmt(t->vspeed, "%+d %s", value, unit ? unit : "fpm");
+    else       lv_label_set_text(t->vspeed, "--");
+}
+
+void ui_telemetry_set_hdop(ui_telemetry_t *t, float hdop, bool valid)
+{
+    if (!t) return;
+    if (!valid) {
+        lv_label_set_text(t->hdop, "--");
+        lv_obj_set_style_text_color(t->hdop, UI_C_MUTED, 0);
+        return;
+    }
     lv_label_set_text_fmt(t->hdop, "%.1f", hdop);
     lv_obj_set_style_text_color(t->hdop, hdop <= 1.5f ? UI_C_GREEN : UI_C_RED, 0);
 }
 
-void ui_telemetry_set_dop(ui_telemetry_t *t, float pdop, float vdop, int fix_type)
+void ui_telemetry_set_dop(ui_telemetry_t *t, float pdop, float vdop, int fix_type, bool valid)
 {
     if (!t) return;
-    // Same 1.5 "good" threshold ui_telemetry_set_hdop() already uses for
-    // HDOP -- PDOP/VDOP are the same dilution-of-precision quantity on
-    // different axes, no reason for a different cutoff.
-    lv_label_set_text_fmt(t->pdop, "%.1f", pdop);
-    lv_obj_set_style_text_color(t->pdop, pdop <= 1.5f ? UI_C_GREEN : UI_C_RED, 0);
-    lv_label_set_text_fmt(t->vdop, "%.1f", vdop);
-    lv_obj_set_style_text_color(t->vdop, vdop <= 1.5f ? UI_C_GREEN : UI_C_RED, 0);
+    if (valid) {
+        // Same 1.5 "good" threshold ui_telemetry_set_hdop() already uses
+        // for HDOP -- PDOP/VDOP are the same dilution-of-precision
+        // quantity on different axes, no reason for a different cutoff.
+        lv_label_set_text_fmt(t->pdop, "%.1f", pdop);
+        lv_obj_set_style_text_color(t->pdop, pdop <= 1.5f ? UI_C_GREEN : UI_C_RED, 0);
+        lv_label_set_text_fmt(t->vdop, "%.1f", vdop);
+        lv_obj_set_style_text_color(t->vdop, vdop <= 1.5f ? UI_C_GREEN : UI_C_RED, 0);
+    } else {
+        lv_label_set_text(t->pdop, "--");
+        lv_obj_set_style_text_color(t->pdop, UI_C_MUTED, 0);
+        lv_label_set_text(t->vdop, "--");
+        lv_obj_set_style_text_color(t->vdop, UI_C_MUTED, 0);
+    }
 
     const char *text = fix_type == 3 ? "3D FIX"
                       : fix_type == 2 ? "2D FIX"
