@@ -64,12 +64,27 @@ ui_home_t *ui_home_create(lv_event_cb_t tab_cb);
 void ui_home_set_position(ui_home_t *h, const char *lat, const char *lon);
 // value/unit are already converted -- e.g. (9.4, "ft") or (2.9, "m"), per
 // app_settings_get_elevation_m(); this screen just displays what it's given.
-void ui_home_set_accuracy(ui_home_t *h, float value, const char *unit);
-void ui_home_set_speed(ui_home_t *h, float speed, const char *unit);
+// valid == false (no fix yet this session) shows "--" instead of `value` --
+// see ui_home_set_speed()'s own comment for why this matters: unlike
+// ui_home_set_heading() below, this used to have no way to express "no
+// data" at all, so a device that never got a fix showed this card's
+// creation-time demo number forever instead.
+void ui_home_set_accuracy(ui_home_t *h, float value, const char *unit, bool valid);
+// valid == false (no fix yet this session) shows "--" instead of `speed` --
+// gps_ui_bridge.c's tick() only ever called this when st.speed_valid, so a
+// device that never got a fix (confirmed on real hardware: NO FIX/0 sats
+// sitting right next to a confident "42 mph") kept showing
+// ui_home_create()'s literal creation-time demo number forever, since
+// nothing ever told this card there was no real data to show instead.
+// ui_home_set_heading() right below already had this exact problem solved
+// (its own `valid` param) -- this brings speed/altitude/accuracy/position/
+// local-time in line with it rather than leaving them as the one part of
+// this screen that couldn't say "no data yet".
+void ui_home_set_speed(ui_home_t *h, float speed, const char *unit, bool valid);
 // valid == false (stationary, or no fix) shows "---"/"--" -- see gps.h's
 // heading_valid for why a GPS course-over-ground can't be trusted at rest.
 void ui_home_set_heading(ui_home_t *h, int deg, const char *cardinal, bool valid);
-void ui_home_set_altitude(ui_home_t *h, int altitude, const char *unit);
+void ui_home_set_altitude(ui_home_t *h, int altitude, const char *unit, bool valid);
 void ui_home_set_satellites(ui_home_t *h, int count, const char *quality);
 // Despite the original design's card being captioned "TIME (UTC)", this
 // project's users are all in one place (Fort Worth, TX) and want to read

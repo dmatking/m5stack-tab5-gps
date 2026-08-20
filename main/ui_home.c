@@ -398,9 +398,15 @@ void ui_home_set_position(ui_home_t *h, const char *lat, const char *lon)
     lv_label_set_text(h->pos_line2, lon);
 }
 
-void ui_home_set_accuracy(ui_home_t *h, float value, const char *unit)
+void ui_home_set_accuracy(ui_home_t *h, float value, const char *unit, bool valid)
 {
     if (!h) return;
+    if (!valid) {
+        lv_label_set_text(h->acc_val, "--");
+        lv_label_set_text(h->acc_quality, "--");
+        lv_obj_set_style_text_color(h->acc_quality, UI_C_MUTED, 0);
+        return;
+    }
     lv_label_set_text_fmt(h->acc_val, "+/- %.1f %s", value, unit ? unit : "ft");
     // Quality thresholds are unit-specific -- 16ft/40ft in feet, converted
     // to their meter equivalents (~4.9m/~12.2m) when in meters, so "Good"/
@@ -414,10 +420,11 @@ void ui_home_set_accuracy(ui_home_t *h, float value, const char *unit)
                                 value <= good ? UI_C_MUTED : UI_C_RED, 0);
 }
 
-void ui_home_set_speed(ui_home_t *h, float speed, const char *unit)
+void ui_home_set_speed(ui_home_t *h, float speed, const char *unit, bool valid)
 {
     if (!h) return;
-    lv_label_set_text_fmt(h->speed, "%d", (int)(speed + 0.5f));
+    if (valid) lv_label_set_text_fmt(h->speed, "%d", (int)(speed + 0.5f));
+    else       lv_label_set_text(h->speed, "--");
     if (unit) lv_label_set_text(h->speed_unit, unit);
 }
 
@@ -426,10 +433,11 @@ void ui_home_set_heading(ui_home_t *h, int deg, const char *cardinal, bool valid
     if (h) ui_compass_set_heading(h->heading_val, h->heading_sub, deg, cardinal, valid);
 }
 
-void ui_home_set_altitude(ui_home_t *h, int altitude, const char *unit)
+void ui_home_set_altitude(ui_home_t *h, int altitude, const char *unit, bool valid)
 {
     if (!h) return;
-    lv_label_set_text_fmt(h->altitude, "%d", altitude);
+    if (valid) lv_label_set_text_fmt(h->altitude, "%d", altitude);
+    else       lv_label_set_text(h->altitude, "--");
     if (unit) lv_label_set_text(h->altitude_unit, unit);
 }
 

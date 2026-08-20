@@ -54,14 +54,26 @@ typedef struct {
 ui_telemetry_t *ui_telemetry_create(lv_event_cb_t tab_cb);
 
 /* ---- setters ------------------------------------------------------------ */
-void ui_telemetry_set_position(ui_telemetry_t *t, double dd_lat, double dd_lon);
+// valid == false (no fix yet this session) shows "--" instead of a
+// formatted lat/lon -- same "no data" gap as this header's other setters,
+// see ui_telemetry_set_vspeed()'s own comment.
+void ui_telemetry_set_position(ui_telemetry_t *t, double dd_lat, double dd_lon, bool valid);
 // value is already converted; unit is "fpm" or "m/min" per
-// app_settings_get_elevation_m().
-void ui_telemetry_set_vspeed(ui_telemetry_t *t, int value, const char *unit);
-void ui_telemetry_set_hdop(ui_telemetry_t *t, float hdop);
+// app_settings_get_elevation_m(). valid == false (no altitude fix yet)
+// shows "--" instead of `value` -- see ui_home_set_speed()'s comment
+// (main/ui_home.h) for why this matters: gps_ui_bridge.c's tick() only
+// ever called these when the underlying GPS field was valid, so without a
+// way to say "no data" they'd keep showing whatever number was last set
+// (this screen's own creation-time demo value, on a device that never got
+// a fix) instead of anything honest.
+void ui_telemetry_set_vspeed(ui_telemetry_t *t, int value, const char *unit, bool valid);
+void ui_telemetry_set_hdop(ui_telemetry_t *t, float hdop, bool valid);
 // pdop/vdop are raw DOP values (lower = better, same convention as HDOP);
 // fix_type is GSA field 3 as-is: 0 = not seen yet, 1 = no fix, 2 = 2D, 3 = 3D.
-void ui_telemetry_set_dop(ui_telemetry_t *t, float pdop, float vdop, int fix_type);
+// valid == false blanks pdop/vdop to "--" too (fix_type's own "0 = not
+// seen yet" case already reads fine as-is, kept for when GSA has reported
+// *something* but this tick's dop_valid gate didn't pass).
+void ui_telemetry_set_dop(ui_telemetry_t *t, float pdop, float vdop, int fix_type, bool valid);
 // tz_abbrev updates the LOCAL card's own caption ("LOCAL | CDT"/"LOCAL |
 // CST") -- see gps_ui_bridge.c's us_central_from_utc(), which flips it
 // twice a year along with the actual UTC offset it applies.
