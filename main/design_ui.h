@@ -11,6 +11,7 @@
 #include "ui_map.h"
 #include "ui_nav.h"
 #include "ui_telemetry.h"
+#include "ui_driving.h"
 #include "ui_goto.h"
 #include "ui_settings.h"
 #include "ui_wifi.h"
@@ -32,6 +33,10 @@ void ui_show_goto(void);
 // Wi-Fi row (UI_SET_WIFI in settings_row_cb()). Its own Cancel button
 // returns to Settings the same way Goto's Cancel returns to Home.
 void ui_show_wifi(void);
+
+// Loads main/ui_driving.c's full-screen giant-speed display -- reached by
+// tapping Home's SPEED card. Tapping anywhere on it returns to Home.
+void ui_show_driving(void);
 
 // Rebuilds Goto's saved-waypoint list from main/waypoints.h. Called on
 // every entry to the Goto screen, and must also be called after any
@@ -58,6 +63,7 @@ ui_telemetry_t *ui_telemetry(void);
 ui_goto_t      *ui_goto(void);
 ui_settings_t  *ui_settings(void);
 ui_wifi_t      *ui_wifi(void);
+ui_driving_t   *ui_driving(void);
 
 #ifdef __cplusplus
 }

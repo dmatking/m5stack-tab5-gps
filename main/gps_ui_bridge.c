@@ -482,7 +482,13 @@ static void tick(void)
 
     {
         float mph = st.speed_valid ? st.speed_knots * 1.15078f : 0.0f;
-        ui_home_set_speed(h, conv_speed_mph(mph, dist_km), speed_unit_str(dist_km), st.speed_valid);
+        float speed_disp = conv_speed_mph(mph, dist_km);
+        const char *speed_unit = speed_unit_str(dist_km);
+        ui_home_set_speed(h, speed_disp, speed_unit, st.speed_valid);
+        // Driving screen (main/ui_driving.c) -- same value Home's own
+        // SPEED card just got, just also pushed to the giant-number
+        // screen reached by tapping that card.
+        ui_driving_set_speed(ui_driving(), speed_disp, speed_unit, st.speed_valid);
     }
 
     // Gated on heading_valid (gps.h) rather than shown unconditionally --
