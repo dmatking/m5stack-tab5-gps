@@ -17,6 +17,7 @@ typedef struct {
     lv_obj_t *pos_line1;      /* 32° 54.1234' N   */
     lv_obj_t *pos_line2;      /* 097° 19.5678' W  */
 
+    lv_obj_t *speed_card;     /* tappable -- see ui_home_set_speed_tap_cb() */
     lv_obj_t *speed;
     lv_obj_t *speed_unit;     /* "mph"/"km/h" -- see app_settings_get_distance_km() */
     lv_obj_t *heading_val;
@@ -120,6 +121,13 @@ void ui_home_set_mark_cb(ui_home_t *h, void (*cb)(void));
 // new waypoint's name, or why it failed), then restores it after ~1.8s.
 // Stands in for a toast/snackbar, which this app doesn't have.
 void ui_home_flash_mark(ui_home_t *h, const char *text);
+
+// SPEED card -> driving screen (main/ui_driving.c), a giant single-metric
+// display for reading at a glance while actually driving -- direct field-
+// test feedback that this card is too small for that. Reuses ui_box()'s
+// default CLICKABLE rather than adding a dedicated button, same as every
+// other "make an existing card tappable" spot in this app.
+void ui_home_set_speed_tap_cb(ui_home_t *h, lv_event_cb_t cb, void *user_data);
 
 #ifdef __cplusplus
 }

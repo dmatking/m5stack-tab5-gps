@@ -30,6 +30,7 @@ static ui_telemetry_t *s_tel_p;
 static ui_goto_t      *s_goto_p;
 static ui_settings_t  *s_set_p;
 static ui_wifi_t      *s_wifi_p;
+static ui_driving_t   *s_driving_p;
 static bool            s_navigating;
 
 static void load(lv_obj_t *screen)
@@ -81,6 +82,10 @@ static void goto_cancel_cb(lv_event_t *e) { LV_UNUSED(e); ui_show_tab(UI_TAB_HOM
 // actual esp_wifi work; this just reads the typed fields and hands them
 // off, same ownership split as goto_start_cb()/ui_goto_parse() above.
 static void wifi_cancel_cb(lv_event_t *e) { LV_UNUSED(e); ui_show_tab(UI_TAB_MORE); }
+
+// Home's SPEED card -> driving screen, and back again on any tap there.
+static void driving_enter_cb(lv_event_t *e) { LV_UNUSED(e); ui_show_driving(); }
+static void driving_exit_cb(lv_event_t *e)  { LV_UNUSED(e); ui_show_tab(UI_TAB_HOME); }
 static void wifi_connect_cb(lv_event_t *e)
 {
     LV_UNUSED(e);
@@ -235,6 +240,7 @@ void ui_init(void)
     s_goto_p = ui_goto_create(tab_event_cb);
     s_set_p  = ui_settings_create(tab_event_cb);
     s_wifi_p = ui_wifi_create(tab_event_cb);
+    s_driving_p = ui_driving_create();
 
     ui_nav_set_buttons(s_nav_p, nav_map_cb, nav_stop_cb);
     ui_goto_set_start_cb(s_goto_p, goto_start_cb, NULL);
@@ -245,6 +251,9 @@ void ui_init(void)
 
     ui_wifi_set_connect_cb(s_wifi_p, wifi_connect_cb, NULL);
     ui_wifi_set_cancel_cb(s_wifi_p, wifi_cancel_cb, NULL);
+
+    ui_home_set_speed_tap_cb(s_home_p, driving_enter_cb, NULL);
+    ui_driving_set_exit_cb(s_driving_p, driving_exit_cb, NULL);
 
     // Sync each switch/slider to its real persisted value -- ui_settings_create()
     // itself always creates them at their own demo values, same "creation-time
@@ -299,6 +308,7 @@ void ui_show_tab(ui_tab_t tab)
 void ui_show_goto(void) { ui_goto_refresh_saved(); load(s_goto_p->screen); }
 void ui_show_nav(void)  { load(s_nav_p->screen); }
 void ui_show_wifi(void) { load(s_wifi_p->screen); }
+void ui_show_driving(void) { load(s_driving_p->screen); }
 
 void ui_set_navigating(bool navigating)
 {
@@ -333,3 +343,4 @@ ui_telemetry_t *ui_telemetry(void) { return s_tel_p; }
 ui_goto_t      *ui_goto(void)      { return s_goto_p; }
 ui_settings_t  *ui_settings(void)  { return s_set_p; }
 ui_wifi_t      *ui_wifi(void)      { return s_wifi_p; }
+ui_driving_t   *ui_driving(void)   { return s_driving_p; }

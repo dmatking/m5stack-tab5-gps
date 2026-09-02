@@ -243,8 +243,8 @@ ui_home_t *ui_home_create(lv_event_cb_t tab_cb)
     // SPEED/ALTITUDE's numbers sit noticeably higher than HEADING's,
     // confirmed via a photographed-alignment comparison. Not derived from
     // exact font metrics, just measured/adjusted against a real capture.
-    metric_card(row1, 10, "SPEED", "42", ui_font.num_l, "mph", UI_C_TEXT,
-                49, &h->speed, &h->speed_unit);
+    h->speed_card = metric_card(row1, 10, "SPEED", "42", ui_font.num_l, "mph", UI_C_TEXT,
+                                49, &h->speed, &h->speed_unit);
 
     lv_obj_t *hcard = ui_card(row1);
     lv_obj_set_height(hcard, LV_PCT(100));
@@ -510,4 +510,11 @@ void ui_home_set_tracking(ui_home_t *h, bool on)
 void ui_home_set_reset_trip_cb(ui_home_t *h, void (*cb)(void))
 {
     if (h) h->reset_trip_cb = cb;
+}
+
+void ui_home_set_speed_tap_cb(ui_home_t *h, lv_event_cb_t cb, void *user_data)
+{
+    if (h && h->speed_card && cb) {
+        lv_obj_add_event_cb(h->speed_card, cb, LV_EVENT_CLICKED, user_data);
+    }
 }
