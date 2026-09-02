@@ -114,3 +114,11 @@ i2c_master_bus_handle_t   board_i2c_bus_handle(void);
 // board's own boost fights a host PC's VBUS on the same line. No-op if
 // board_init() hasn't run yet.
 void board_set_usb5v_en(bool enable);
+
+// Enables/disables the IP2326 charging IC via CHG_EN -- see
+// board_set_charge_en()'s own comment (main/board_m5stack_tab5.c) for why
+// this needs to be called explicitly at all. board_init() calls this with
+// `true` once at boot; no other call site exists yet (no user-facing
+// charging toggle in this app, unlike the vendor UserDemo's own Settings
+// panel).
+void board_set_charge_en(bool enable);

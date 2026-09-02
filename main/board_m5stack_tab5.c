@@ -244,6 +244,30 @@ void board_set_usb5v_en(bool enable)
     i2c_master_transmit(s_pi4ioe2_dev, wb, 2, I2C_TIMEOUT_MS);
 }
 
+void board_set_charge_en(bool enable)
+{
+    if (!s_pi4ioe2_dev) return;  // pi4ioe_init() hasn't run
+    // CHG_EN(P7) on the same PI4IOE2 -- gates the IP2326 charging IC.
+    // pi4ioe_init() leaves this bit low (it only ever drives P0/P3 high),
+    // matching the vendor UserDemo's own boot-time IO-expander init
+    // byte-for-byte -- but the vendor's real firmware separately calls the
+    // equivalent of this function with `true` once at HAL startup
+    // (platforms/tab5/main/hal/hal_esp32.cpp's `setChargeEnable(true)`,
+    // confirmed by reading that source directly), and again exposes it as a
+    // user-facing "Battery charging enabled" toggle defaulting on. Without
+    // an equivalent call somewhere in this codebase, CHG_EN just never gets
+    // set -- the IP2326 stays disabled indefinitely regardless of how long
+    // USB-C stays connected (confirmed on real hardware: battery didn't
+    // recharge after 13+ hours plugged in). Read-modify-write, not a fixed
+    // byte, so it doesn't clobber WLAN_PWR_EN(P0)/USB5V_EN(P3)'s current
+    // state -- same reasoning as the vendor's own bsp_set_charge_en().
+    uint8_t wb[2] = { PI4IO_REG_OUT_SET, 0 };
+    uint8_t rb[1];
+    i2c_master_transmit_receive(s_pi4ioe2_dev, wb, 1, rb, 1, I2C_TIMEOUT_MS);
+    wb[1] = enable ? (uint8_t)(rb[0] | 0b10000000) : (uint8_t)(rb[0] & ~0b10000000);
+    i2c_master_transmit(s_pi4ioe2_dev, wb, 2, I2C_TIMEOUT_MS);
+}
+
 // --- RGB565 helpers ---
 
 static inline uint16_t rgb888_to_rgb565(uint8_t r, uint8_t g, uint8_t b)
@@ -266,6 +290,18 @@ void board_init(void)
 
     // 1. I2C + IO expander (must happen before display init to assert LCD_RST)
     pi4ioe_init();
+
+    // board_set_charge_en(true) is deliberately NOT called here yet --
+    // confirmed on real hardware to brownout-crash-loop the device
+    // (deterministic: every boot, right as WiFi's radio keys up for
+    // association, real charge current + the radio's own current spike
+    // together sagged the rail past the brownout threshold). Charging
+    // still needs to get enabled somehow (see board_set_charge_en()'s own
+    // comment for why it's off by default), just not unconditionally at
+    // boot like this -- likely needs the charger forced into its lower
+    // -current mode too (QC_EN, bit 5 on the same PI4IOE2, currently
+    // untouched anywhere in this codebase) before it's safe to enable
+    // alongside everything else this app's boot sequence already does.
 
     // 2. LDO for MIPI DSI PHY
     esp_ldo_channel_handle_t phy_ldo = NULL;

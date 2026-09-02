@@ -52,6 +52,41 @@ static const char *TAG = "SD_CARD";
 static sdmmc_card_t *s_card = NULL;
 static bool s_mounted = false;
 
+// esp_hosted's own SDIO driver (main.c's esp_hosted_connect_to_slave(),
+// which runs well before this ever does -- see main.c's call order)
+// already calls sdmmc_host_init() itself, to claim the ESP32-P4's SDMMC
+// controller and attach its own slot 1 to it for the C6 WiFi link
+// (confirmed by reading esp_hosted's own
+// port_esp_hosted_host_sdio.c directly). This is by design, not a
+// conflict to avoid -- SOC_SDMMC_NUM_SLOTS is 2, and the whole point of
+// the shared-controller/per-slot model is that both the SD card (slot 0)
+// and the WiFi link (slot 1) attach to the SAME controller. The actual
+// bug: sdmmc_host_init() itself (esp-idf's own
+// esp_driver_sdmmc/legacy/src/sdmmc_host.c) has no "already initialized"
+// guard -- it unconditionally tries to CLAIM a brand new controller
+// instance every time it's called, and there's only one such instance on
+// this chip (SDMMC_LL_HOST_CTLR_NUMS == 1) to claim. Calling it again
+// here for slot 0, after esp_hosted's already claimed the only instance,
+// always fails with ESP_ERR_NOT_FOUND ("no available sd host
+// controller") -- confirmed against the exact error code
+// (esp_err.h: ESP_ERR_NOT_FOUND == 0x105, matching this project's own
+// crash-log "host init failed (0x105)" byte for byte). Since
+// esp_vfs_fat_sdmmc_mount() unconditionally calls host.init() with no way
+// to skip it, the fix lives here: point host.init at this wrapper, which
+// treats "someone already claimed the shared controller" as success, not
+// failure. Safe specifically because sdmmc_host_init()'s internal state
+// (the claimed controller handle, and both slots' handles) are module-
+// static in that one shared driver source file -- whichever caller
+// creates the controller first, ALL subsequent sdmmc_host_init_slot()
+// calls (ours for slot 0, esp_hosted's already-done one for slot 1)
+// attach to that exact same shared controller regardless of who made it.
+static esp_err_t sd_host_init_or_already_claimed(void)
+{
+    esp_err_t err = sdmmc_host_init();
+    if (err == ESP_ERR_NOT_FOUND) return ESP_OK;
+    return err;
+}
+
 bool sd_card_mount(void)
 {
     sd_pwr_ctrl_ldo_config_t ldo_cfg = { .ldo_chan_id = SD_LDO_CHAN };
@@ -65,6 +100,7 @@ bool sd_card_mount(void)
     }
 
     sdmmc_host_t host = SDMMC_HOST_DEFAULT();
+    host.init = &sd_host_init_or_already_claimed;
     host.slot = SDMMC_HOST_SLOT_0;
     host.max_freq_khz = SDMMC_FREQ_HIGHSPEED;
     host.pwr_ctrl_handle = pwr_ctrl_handle;
