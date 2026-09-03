@@ -19,33 +19,21 @@ __pycache__/
 *.pyc
 .venv/
 
-# Cached raw tile downloads + generated blob (tools/fetch_tiles.py)
-tools/.tile_png_cache/
-tools/tiles.bin
-/tiles.bin
-
-# SD-card tile shard output (tools/fetch_tiles.py --target sd) -- large
-# regenerable binary blobs, same reasoning as tiles.bin above.
-tiles_sd_out/
-tools_sd_test/
-tools_sd_test_single/
-tiles_sd_*.bin
-
 # IDE
 .vscode/
 .idea/
 
-# Design hand-off zips + their unpacked contents, working GIS data, mockup
-# image blobs, and misc tile scratch data -- large, regenerable/source-
-# controlled-elsewhere working files dropped in the tree during design/tile
-# work, never meant to be committed (see the untracked-files sweep this was
-# added from).
+# Design hand-off zips + their unpacked contents, and mockup image blobs --
+# large, regenerable/source-controlled-elsewhere working files dropped in
+# the tree during design work, never meant to be committed (see the
+# untracked-files sweep this was added from). Tile-generation tooling and
+# working data (fetch_tiles.py, arcgis_bundle_to_sd.py, gisdata/, tiles*)
+# moved to their own repo, m5stack-tab5-map-tiles -- nothing in this repo
+# produces that output anymore, so those ignore rules moved with them.
 /M4Stack GPS Handheld*.zip
-/gisdata/
 /lvgl_design_extract/
 /lvgl_design_extract2/
 /mockups_rgb565/
-/tiles/
 
 # Reference photos/screenshots dropped in the working tree (e.g. hardware
 # pinout photos taken during debugging) -- not project assets, not meant

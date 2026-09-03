@@ -48,8 +48,9 @@ This project targets the Tab5 exclusively — no board-selection variable needed
 - `components/esp_lcd_st7123/` — vendored LCD panel driver.
 - `tools/` — development scripts:
   - `pull_snapshot.py` — pull a live screenshot of any LVGL screen over USB, optionally switching tabs first.
-  - `fetch_tiles.py` / `arcgis_bundle_to_sd.py` — build the offline map tile dataset for the SD card.
+  - `sd_screenshots_to_png.py` — decode the corner-tap screenshot hotspot's raw SD-card captures into PNGs.
   - `sdmount.sh` / `eject.sh` / `send_to_sd.py` / `recv_from_sd.py` — SD-card transfer workflows.
+  - Offline map tile generation (fetching source imagery, building the SD-card tile dataset) lives in its own repo, `m5stack-tab5-map-tiles` — nothing here produces tile data directly.
 - `partitions.csv` — custom dual-OTA-slot partition table, with dedicated NVS partitions for settings, waypoints, and a raw screen-capture scratch region.
 
 ## License
