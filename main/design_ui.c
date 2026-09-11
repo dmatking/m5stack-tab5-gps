@@ -166,6 +166,15 @@ static void time_24h_switch_cb(lv_event_t *e)
     app_settings_set_time_24h(on);
 }
 
+// Driving screen's compass resolution -- same "no broadcast needed" reasoning
+// as 24-hour time above: gps_ui_bridge.c's tick() reads
+// app_settings_get_compass_16pt() fresh every tick.
+static void compass_16pt_switch_cb(lv_event_t *e)
+{
+    bool on = lv_obj_has_state((lv_obj_t *)lv_event_get_target(e), LV_STATE_CHECKED);
+    app_settings_set_compass_16pt(on);
+}
+
 // Brightness slider -- applies immediately (not just on release) so
 // dragging it previews the actual result, same as most brightness sliders.
 static void brightness_slider_cb(lv_event_t *e)
@@ -260,6 +269,9 @@ void ui_init(void)
     // placeholder, corrected right after" pattern throughout this function.
     ui_settings_set_time_24h(s_set_p, app_settings_get_time_24h());
     ui_settings_set_time_24h_cb(s_set_p, time_24h_switch_cb);
+
+    ui_settings_set_compass_16pt(s_set_p, app_settings_get_compass_16pt());
+    ui_settings_set_compass_16pt_cb(s_set_p, compass_16pt_switch_cb);
 
     int brightness = app_settings_get_brightness();
     ui_settings_set_brightness(s_set_p, brightness);

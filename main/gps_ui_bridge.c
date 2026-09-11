@@ -69,6 +69,19 @@ static const char *cardinal_8(float deg)
     return names[idx];
 }
 
+// 16-point compass ("NNE", "ESE", etc.) -- driving screen only (main/ui_driving.c).
+// Same bucketing idea as cardinal_8() above, just 16 buckets of 22.5deg
+// instead of 8 of 45deg.
+static const char *cardinal_16(float deg)
+{
+    static const char *names[16] = {
+        "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+        "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
+    };
+    int idx = ((int)((deg + 11.25f) / 22.5f)) & 15;
+    return names[idx];
+}
+
 // HDOP -> a rough horizontal-accuracy estimate. Not a real CEP/precision
 // figure -- just HDOP times a typical civilian-GPS user-range-error
 // constant (~5m), which is the standard back-of-envelope approximation
@@ -496,6 +509,14 @@ static void tick(void)
     // "---" standing still instead of a confident stale bearing.
     ui_home_set_heading(h, (int)(st.heading_deg + 0.5f),
                         cardinal_8(st.heading_deg), st.heading_valid);
+
+    // Driving screen's heading readout -- same heading_valid gate as
+    // Home's compass above (obviously only means anything while actually
+    // moving), resolution picked per Settings' "16-point compass" switch.
+    ui_driving_set_heading(ui_driving(),
+                           app_settings_get_compass_16pt() ? cardinal_16(st.heading_deg)
+                                                            : cardinal_8(st.heading_deg),
+                           st.heading_valid);
 
     {
         float alt_ft = st.altitude_valid ? st.altitude_m * 3.28084f : 0.0f;

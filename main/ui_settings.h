@@ -31,6 +31,7 @@ typedef struct {
     lv_obj_t *value[UI_SET_COUNT];        /* right-hand value label */
     lv_obj_t *sw_screen_on;
     lv_obj_t *sw_time_24h;
+    lv_obj_t *sw_compass_16pt;
     lv_obj_t *sd_usage;
     lv_obj_t *footer;
 } ui_settings_t;
@@ -46,6 +47,9 @@ void ui_settings_set_brightness(ui_settings_t *s, int percent);
 void ui_settings_set_value(ui_settings_t *s, ui_setting_id_t id, const char *text);
 void ui_settings_set_screen_on(ui_settings_t *s, bool on);
 void ui_settings_set_time_24h(ui_settings_t *s, bool on);
+// Driving screen's (main/ui_driving.c) compass heading resolution --
+// off = 8-point (N/NE/E/...), on = 16-point (N/NNE/NE/ENE/...).
+void ui_settings_set_compass_16pt(ui_settings_t *s, bool on);
 void ui_settings_set_storage(ui_settings_t *s, float used_gb, float total_gb);
 // "Recording"/UI_C_GREEN when true, "Not recording"/UI_C_MUTED when false --
 // real gps_log_active() state (main/gps.h), not the fabricated "| 5 s"
@@ -60,6 +64,8 @@ void ui_settings_set_row_cb(ui_settings_t *s, lv_event_cb_t cb);
 void ui_settings_set_brightness_cb(ui_settings_t *s, lv_event_cb_t cb);
 /* 24-hour-time switch LV_EVENT_VALUE_CHANGED. */
 void ui_settings_set_time_24h_cb(ui_settings_t *s, lv_event_cb_t cb);
+/* 16-point-compass switch LV_EVENT_VALUE_CHANGED. */
+void ui_settings_set_compass_16pt_cb(ui_settings_t *s, lv_event_cb_t cb);
 /* "Keep screen on" switch LV_EVENT_VALUE_CHANGED. */
 void ui_settings_set_screen_on_cb(ui_settings_t *s, lv_event_cb_t cb);
 

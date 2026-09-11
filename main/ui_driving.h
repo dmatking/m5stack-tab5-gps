@@ -16,6 +16,7 @@ typedef struct {
     lv_obj_t *screen;
     lv_obj_t *speed;       /* giant number, or "--" with no fix/no speed yet */
     lv_obj_t *speed_unit;  /* "mph"/"km/h" */
+    lv_obj_t *heading;     /* 16-point compass ("NNE" etc.), or "--" -- see ui_driving_set_heading() */
 } ui_driving_t;
 
 /* Builds the screen but does not load it. */
@@ -28,6 +29,13 @@ ui_driving_t *ui_driving_create(void);
 // a giant confident-looking number is exactly the wrong thing to show
 // with no real data behind it.
 void ui_driving_set_speed(ui_driving_t *d, float speed, const char *unit, bool valid);
+
+// 16-point compass heading ("NNE"/"ESE"/etc, gps_ui_bridge.c's cardinal_16())
+// below the speed. valid == false shows "--" instead -- GPS course-over-
+// ground is meaningless standing still, same gps.h heading_valid gate every
+// other heading readout in this app already uses (see ui_home_set_heading()'s
+// own comment). Obviously only means anything while actually moving.
+void ui_driving_set_heading(ui_driving_t *d, const char *cardinal, bool valid);
 
 // Tap anywhere on the screen returns to Home -- registered on the screen
 // root itself, no button/chrome to keep this screen as uncluttered as its

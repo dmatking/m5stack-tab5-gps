@@ -67,6 +67,12 @@ void app_settings_set_distance_km(bool km);
 bool app_settings_get_elevation_m(void);
 void app_settings_set_elevation_m(bool meters);
 
+// Compass point resolution for the driving screen's heading readout
+// (main/ui_driving.c): false = 8-point (N/NE/E/...), true = 16-point
+// (N/NNE/NE/ENE/...). Default false.
+bool app_settings_get_compass_16pt(void);
+void app_settings_set_compass_16pt(bool sixteen_pt);
+
 #ifdef __cplusplus
 }
 #endif

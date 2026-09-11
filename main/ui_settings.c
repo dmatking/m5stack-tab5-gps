@@ -198,6 +198,12 @@ ui_settings_t *ui_settings_create(lv_event_cb_t tab_cb)
     // design_ui.c's ui_init() calls ui_settings_set_time_24h() right after
     // creation with the real persisted value.
     s->sw_time_24h = row_switch(g2, "24-hour time", false);
+    ui_divider(g2);
+    // Driving screen's (main/ui_driving.c) heading readout -- off = 8-point,
+    // on = 16-point. Same persisted-switch treatment as 24-hour time above;
+    // false here is just the pre-sync creation-time value, ui_init() syncs
+    // the real one right after creation.
+    s->sw_compass_16pt = row_switch(g2, "16-point compass", false);
 
     /* gnss ----------------------------------------------------------------- */
     // No ui_mark_placeholder() -- both remaining rows are real (read-only)
@@ -292,6 +298,13 @@ void ui_settings_set_time_24h(ui_settings_t *s, bool on)
     else    lv_obj_remove_state(s->sw_time_24h, LV_STATE_CHECKED);
 }
 
+void ui_settings_set_compass_16pt(ui_settings_t *s, bool on)
+{
+    if (!s) return;
+    if (on) lv_obj_add_state(s->sw_compass_16pt, LV_STATE_CHECKED);
+    else    lv_obj_remove_state(s->sw_compass_16pt, LV_STATE_CHECKED);
+}
+
 void ui_settings_set_storage(ui_settings_t *s, float used_gb, float total_gb)
 {
     if (s) lv_label_set_text_fmt(s->sd_usage, "%.1f / %.0f GB", used_gb, total_gb);
@@ -335,6 +348,12 @@ void ui_settings_set_time_24h_cb(ui_settings_t *s, lv_event_cb_t cb)
 {
     if (s && cb)
         lv_obj_add_event_cb(s->sw_time_24h, cb, LV_EVENT_VALUE_CHANGED, NULL);
+}
+
+void ui_settings_set_compass_16pt_cb(ui_settings_t *s, lv_event_cb_t cb)
+{
+    if (s && cb)
+        lv_obj_add_event_cb(s->sw_compass_16pt, cb, LV_EVENT_VALUE_CHANGED, NULL);
 }
 
 void ui_settings_set_screen_on_cb(ui_settings_t *s, lv_event_cb_t cb)

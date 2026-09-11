@@ -15,6 +15,7 @@ static const char *TAG = "APP_SETTINGS";
 #define KEY_COORD_FORMAT   "coord_fmt"
 #define KEY_DISTANCE_KM    "dist_km"
 #define KEY_ELEVATION_M    "elev_m"
+#define KEY_COMPASS_16PT   "compass_16pt"
 
 static bool s_time_24h; // default false (12-hour) -- matches the design's own "10:24 AM" demo strings
 static int  s_brightness = 72;      // default matches ui_settings.c's own demo value
@@ -22,6 +23,7 @@ static bool s_keep_screen_on = true; // default matches ui_settings_create()'s c
 static int  s_coord_format;          // default 0 = DD MM.MMMM, matches ui_goto.h's UI_COORD_DDM/ui_settings.c's demo value
 static bool s_distance_km;           // default false = mi/mph
 static bool s_elevation_m;           // default false = feet
+static bool s_compass_16pt;          // default false = 8-point
 
 void app_settings_init(void)
 {
@@ -66,9 +68,12 @@ void app_settings_init(void)
     if (nvs_get_u8(h, KEY_ELEVATION_M, &v) == ESP_OK) {
         s_elevation_m = v != 0;
     }
+    if (nvs_get_u8(h, KEY_COMPASS_16PT, &v) == ESP_OK) {
+        s_compass_16pt = v != 0;
+    }
     nvs_close(h);
-    ESP_LOGI(TAG, "loaded: time_24h=%d brightness=%d keep_screen_on=%d coord_format=%d distance_km=%d elevation_m=%d",
-             s_time_24h, s_brightness, s_keep_screen_on, s_coord_format, s_distance_km, s_elevation_m);
+    ESP_LOGI(TAG, "loaded: time_24h=%d brightness=%d keep_screen_on=%d coord_format=%d distance_km=%d elevation_m=%d compass_16pt=%d",
+             s_time_24h, s_brightness, s_keep_screen_on, s_coord_format, s_distance_km, s_elevation_m, s_compass_16pt);
 }
 
 bool app_settings_get_time_24h(void)
@@ -190,6 +195,26 @@ void app_settings_set_elevation_m(bool meters)
         return;
     }
     nvs_set_u8(h, KEY_ELEVATION_M, meters ? 1 : 0);
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+bool app_settings_get_compass_16pt(void)
+{
+    return s_compass_16pt;
+}
+
+void app_settings_set_compass_16pt(bool sixteen_pt)
+{
+    s_compass_16pt = sixteen_pt;
+
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "nvs_open (write) failed: %s -- setting applied this session only", esp_err_to_name(err));
+        return;
+    }
+    nvs_set_u8(h, KEY_COMPASS_16PT, sixteen_pt ? 1 : 0);
     nvs_commit(h);
     nvs_close(h);
 }

@@ -50,6 +50,15 @@ ui_driving_t *ui_driving_create(void)
     d->speed_unit = ui_label(scr, "mph", ui_font.semi_l, UI_C_MUTED);
     lv_obj_align(d->speed_unit, LV_ALIGN_CENTER, 0, 220);
 
+    // 16-point (or 8-, per Settings' "16-point compass" switch) heading --
+    // "big letters" per request, not scaled like speed above (that's the
+    // one number this screen exists for; heading is a secondary glance).
+    // Plain num_l (48px, this build's largest stock font -- see speed's
+    // own comment) is already clearly bigger than the small unit label
+    // above it, no transform needed.
+    d->heading = ui_label(scr, "--", ui_font.num_l, UI_C_TEXT);
+    lv_obj_align(d->heading, LV_ALIGN_CENTER, 0, 320);
+
     return d;
 }
 
@@ -64,6 +73,18 @@ void ui_driving_set_speed(ui_driving_t *d, float speed, const char *unit, bool v
         lv_obj_set_style_text_color(d->speed, UI_C_MUTED, 0);
     }
     if (unit) lv_label_set_text(d->speed_unit, unit);
+}
+
+void ui_driving_set_heading(ui_driving_t *d, const char *cardinal, bool valid)
+{
+    if (!d) return;
+    if (valid && cardinal) {
+        lv_label_set_text(d->heading, cardinal);
+        lv_obj_set_style_text_color(d->heading, UI_C_TEXT, 0);
+    } else {
+        lv_label_set_text(d->heading, "--");
+        lv_obj_set_style_text_color(d->heading, UI_C_MUTED, 0);
+    }
 }
 
 void ui_driving_set_exit_cb(ui_driving_t *d, lv_event_cb_t cb, void *user_data)
