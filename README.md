@@ -26,7 +26,7 @@ Captured live off real hardware (see `tools/pull_snapshot.py`) — position data
 ## Hardware
 
 - [M5Stack Tab5](https://docs.m5stack.com/en/core/Tab5) — ESP32-P4, MIPI-DSI touch panel, USB-Serial-JTAG.
-- [M5Stack GPS Module v2.1](https://docs.m5stack.com/en/module/GPS%20Module) (AT6668 chipset) on the Tab5's M5-Bus connector, UART @ 115200 8N1.
+- [M5Stack GPS Module v2.1](https://docs.m5stack.com/en/module/Module_GPS_v2.1) (AT6668 chipset) on the Tab5's M5-Bus connector, UART @ 115200 8N1.
 - microSD card, for offline map tiles and GPS logging.
 - Optional: an INA226-based battery gauge on the Tab5's onboard I2C bus (NP-F550-style 2S Li-ion pack).
 
